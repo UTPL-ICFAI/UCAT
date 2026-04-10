@@ -277,8 +277,7 @@ CREATE TABLE daily_workers (
 );
 
 CREATE INDEX idx_daily_workers_project_id ON daily_workers(project_id);
-CREATE INDEX idx_daily_workers_date ON daily_workers(date);
-
+CREATE INDEX idx_daily_workers_date ON daily_workers(work_date);
 -- Create permissions table
 CREATE TABLE permissions (
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE PRIMARY KEY,
