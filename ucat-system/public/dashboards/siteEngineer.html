@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UCAT - Site Engineer Dashboard</title>
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <div class="sidebar">
+      <div class="sidebar-header">UCAT SE</div>
+      <div class="sidebar-user">
+        <div class="user-name" id="userName">Site Engineer</div>
+        <div class="user-role">Site Engineer</div>
+      </div>
+      <div style="padding: 15px 20px;">
+        <input type="text" id="searchBox" placeholder="Search workers..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <ul class="sidebar-nav" id="projectList">
+        <li><a href="#projects" class="nav-link active">My Projects</a></li>
+        <li><a href="#daily-submissions" class="nav-link">Daily Submissions</a></li>
+        <li><a href="#daily-workers" class="nav-link">Daily Workers</a></li>
+        <li><a href="#workers" class="nav-link">Workers</a></li>
+        <li><a href="#daily-report" class="nav-link">Daily Progress Report</a></li>
+        <li><a href="#images-approval" class="nav-link">Image Approval</a></li>
+        <li><a href="#issues" class="nav-link">Issues</a></li>
+      </ul>
+      <div class="sidebar-footer">
+        <button class="logout-btn" onclick="logoutUser()">Logout</button>
+      </div>
+    </div>
+    
+    <div class="main-content">
+      <!-- Projects Section -->
+      <section id="projects" class="page-section">
+        <div class="top-bar">
+          <h1 class="page-title">My Projects</h1>
+        </div>
+        <div id="projectsGrid" class="grid grid-2">
+          <div style="text-align: center; padding: 40px;">Loading...</div>
+        </div>
+      </section>
+      
+      <!-- Daily Submissions Section -->
+      <section id="daily-submissions" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Daily Template Submissions</h1>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">Select Project & Template</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+            <div class="form-group">
+              <label>Project</label>
+              <select id="submissionProjectSelect" class="form-control">
+                <option value="">Choose a project...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Template</label>
+              <select id="submissionTemplateSelect" class="form-control">
+                <option value="">Choose a template...</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Submission Date</label>
+            <input type="date" id="submissionDate" class="form-control" />
+          </div>
+        </div>
+        
+        <!-- Template Form Container -->
+        <div class="card" id="templateFormContainer" style="display: none;">
+          <div class="card-header" id="templateFormTitle">Template Form</div>
+          <form id="dynamicTemplateForm" style="padding: 20px;">
+            <!-- Fields will be dynamically inserted here -->
+          </form>
+          <div style="padding: 20px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px;">
+            <button type="submit" form="dynamicTemplateForm" class="btn btn-primary">Submit Template</button>
+            <button type="reset" form="dynamicTemplateForm" class="btn btn-secondary">Clear</button>
+          </div>
+        </div>
+        
+        <!-- Submissions History -->
+        <div class="card">
+          <div class="card-header">Submission History</div>
+          <table id="submissionsTable">
+            <thead>
+              <tr>
+                <th>Template</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Submitted On</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="submissionsTableBody">
+              <tr><td colspan="5" style="text-align: center; padding: 20px;">No submissions yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      
+      <!-- Daily Workers Section -->
+      <section id="daily-workers" class="page-section hidden">
+        <div class="top-bar flex-between">
+          <h1 class="page-title">Daily Workers Management</h1>
+          <button class="btn btn-primary" onclick="openAddDailyWorkerModal()">+ Add Worker</button>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">Filter</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; padding: 15px;">
+            <div class="form-group">
+              <label>Project</label>
+              <select id="workersProjectSelect" class="form-control" onchange="loadDailyWorkers()">
+                <option value="">Choose a project...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Work Date</label>
+              <input type="date" id="workersDateSelect" class="form-control" onchange="loadDailyWorkers()" />
+            </div>
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">Daily Workers List</div>
+          <table id="dailyWorkersTable">
+            <thead>
+              <tr>
+                <th>Worker Name</th>
+                <th>Gender</th>
+                <th>Category</th>
+                <th>Work Date</th>
+                <th>Attendance</th>
+                <th>Marked By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="dailyWorkersTableBody">
+              <tr><td colspan="7" style="text-align: center; padding: 20px;">No workers added yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      
+      </section>
+
+      <section id="daily-report" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Daily Progress Report</h1>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">Select Project</div>
+          <select id="reportProjectSelect" class="form-control" style="margin-bottom: 20px;">
+            <option value="">Choose a project...</option>
+          </select>
+        </div>
+        
+        <div class="card" id="reportFormContainer" style="display: none;">
+          <div class="card-header">Daily Progress Report Form</div>
+          <form id="dailyReportForm">
+            <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+              <!-- Tunnel Details -->
+              <div class="form-group">
+                <label>Tunnel Type</label>
+                <input type="text" name="tunnelType" placeholder="e.g., Underground Excavation" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Tunnel Start Chainage</label>
+                <input type="text" name="tunnelStartChainage" placeholder="e.g., 197+080" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Tunnel End Chainage</label>
+                <input type="text" name="tunnelEndChainage" placeholder="e.g., 198+758" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Face Current Chainage</label>
+                <input type="text" name="faceCurrentChainage" placeholder="e.g., 197+693" class="form-control">
+              </div>
+              
+              <!-- Tunnel Properties -->
+              <div class="form-group">
+                <label>Tunnel Length/SCOPE (m)</label>
+                <input type="number" name="tunnelLength" step="0.01" placeholder="e.g., 1678" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Steel RDB (No.)</label>
+                <input type="number" name="steelRDB" step="0.1" placeholder="e.g., 23" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Rock Class</label>
+                <input type="text" name="rockClass" placeholder="e.g., III" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Lattice Girders (Nos)</label>
+                <input type="number" name="latticeGirders" step="0.1" placeholder="e.g., 57" class="form-control">
+              </div>
+              
+              <!-- Monthly Target -->
+              <div class="form-group">
+                <label>Month Per day (m)</label>
+                <input type="number" name="monthPerDay" step="0.01" placeholder="e.g., 180.0" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Target Target (m)</label>
+                <input type="number" name="targetTarget" step="0.01" placeholder="e.g., 180.0" class="form-control">
+              </div>
+              
+              <!-- Progress -->
+              <div class="form-group">
+                <label>Today's Progress (m)</label>
+                <input type="number" name="todaysProgress" step="0.01" placeholder="e.g., 7.0" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Progress for This Month (m)</label>
+                <input type="number" name="progressThisMonth" step="0.01" placeholder="e.g., 35.0" class="form-control">
+              </div>
+              
+              <!-- Summary -->
+              <div class="form-group">
+                <label>Till Last Month (m)</label>
+                <input type="number" name="tillLastMonth" step="0.01" placeholder="e.g., 578.10" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Total Progress Up To Date (m)</label>
+                <input type="number" name="totalProgressUpToDate" step="0.01" placeholder="e.g., 613.10" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>Balance (m)</label>
+                <input type="number" name="balance" step="0.01" placeholder="e.g., 1064.9" class="form-control">
+              </div>
+              <div class="form-group">
+                <label>% Age Completed</label>
+                <input type="number" name="percentageCompleted" step="0.01" placeholder="e.g., 36.5" class="form-control">
+              </div>
+              
+              <!-- Remarks -->
+              <div class="form-group" style="grid-column: 1 / -1;">
+                <label>Remarks</label>
+                <textarea name="remarks" placeholder="Any additional remarks..." class="form-control" rows="3"></textarea>
+              </div>
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+              <button type="submit" class="btn btn-primary">Submit & Convert to Document</button>
+              <button type="reset" class="btn btn-secondary">Clear Form</button>
+            </div>
+          </form>
+        </div>
+      </section>
+      
+      <!-- Project Detail Section -->
+      <section id="projectDetail" class="page-section hidden">
+        <div class="top-bar flex-between">
+          <h1 class="page-title" id="detailProjectName">Project Detail</h1>
+          <button class="btn btn-secondary" onclick="backToProjects()">Back to Projects</button>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">Assigned PM</div>
+          <div id="pmInfo"></div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs" style="margin-top: 20px;">
+          <button class="tab active" onclick="switchTab(event, 'my-tasks')">My Tasks</button>
+          <button class="tab" onclick="switchTab(event, 'worker-mgmt')">Worker Management</button>
+          <button class="tab" onclick="switchTab(event, 'attendance')">Attendance</button>
+          <button class="tab" onclick="switchTab(event, 'image-approval')">Image Approval</button>
+          <button class="tab" onclick="switchTab(event, 'se-issues')">Issues</button>
+        </div>
+        
+        <!-- My Tasks Tab -->
+        <div id="my-tasks" class="tab-content active">
+          <table id="myTasksTable">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="myTasksTableBody">
+              <tr><td colspan="4">Loading tasks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Worker Management Tab -->
+        <div id="worker-mgmt" class="tab-content">
+          <button class="btn" style="margin-bottom: 15px;" onclick="openAddWorkerModal()">Add Worker</button>
+          <table id="workersTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Supervisor</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="workersTableBody">
+              <tr><td colspan="4">Loading workers...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Attendance Tab -->
+        <div id="attendance" class="tab-content">
+          <div class="form-group">
+            <label>Select Date:</label>
+            <input type="date" id="attendanceDate" onchange="loadAttendanceForDate()">
+          </div>
+          <table id="attendanceTable">
+            <thead>
+              <tr>
+                <th>Worker</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Marked By</th>
+              </tr>
+            </thead>
+            <tbody id="attendanceTableBody">
+              <tr><td colspan="4">Select a date to view attendance</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Image Approval Tab -->
+        <div id="image-approval" class="tab-content">
+          <h3>Pending Images for Approval</h3>
+          <div class="gallery-grid" id="pendingImagesGallery"></div>
+        </div>
+        
+        <!-- Issues Tab -->
+        <div id="se-issues" class="tab-content">
+          <button class="btn" style="margin-bottom: 15px;" onclick="openRaiseIssueModal()">Raise Issue</button>
+          <table id="seIssuesTable">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="seIssuesTableBody">
+              <tr><td colspan="4">Loading issues...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      
+      <!-- Workers Section -->
+      <section id="workers" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">All Workers</h1>
+        </div>
+        <div class="card">
+          <div class="filter-row">
+            <div class="filter-group">
+              <label>Search:</label>
+              <input type="text" id="workerSearchFilter" placeholder="Search by name">
+            </div>
+          </div>
+          <table id="allWorkersTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Project</th>
+                <th>Supervisor</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="allWorkersTableBody">
+              <tr><td colspan="4">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      
+      <!-- Image Approval Section -->
+      <section id="images-approval" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Image Approval Queue</h1>
+        </div>
+        <div class="gallery-grid" id="allPendingImages"></div>
+      </section>
+      
+      <!-- Issues Section -->
+      <section id="issues" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Issues</h1>
+        </div>
+        <div class="card">
+          <table id="allIssuesTable">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="allIssuesTableBody">
+              <tr><td colspan="5">Loading issues...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  
+  <!-- Add Daily Worker Modal -->
+  <div id="addDailyWorkerModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span>Add Daily Worker</span>
+        <button class="modal-close" onclick="closeModal('addDailyWorkerModal')">&times;</button>
+      </div>
+      <form id="addDailyWorkerForm">
+        <div class="form-group">
+          <label>Project *</label>
+          <select name="project_id" id="addWorkerProjectSelect" required></select>
+        </div>
+        <div class="form-group">
+          <label>Worker Name *</label>
+          <input type="text" name="worker_name" required placeholder="Full name">
+        </div>
+        <div class="form-group">
+          <label>Gender *</label>
+          <select name="gender" required>
+            <option value="">Select gender</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Worker Category *</label>
+          <input type="text" name="worker_category" required placeholder="e.g., Labour, Skilled Worker, etc.">
+        </div>
+        <div class="form-group">
+          <label>Work Date *</label>
+          <input type="date" name="work_date" required>
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn btn-primary">Add Worker</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('addDailyWorkerModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- View Template Submission Modal -->
+  <div id="viewSubmissionModal" class="modal">
+    <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+      <div class="modal-header">
+        <span id="submissionModalTitle">View Submission</span>
+        <button class="modal-close" onclick="closeModal('viewSubmissionModal')">&times;</button>
+      </div>
+      <div id="submissionModalContent" style="padding: 20px;">
+        <!-- Submission data will be loaded here -->
+      </div>
+    </div>
+  </div>
+  
+  <!-- Raise Issue Modal -->
+  <div id="raiseIssueModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span>Raise Issue</span>
+        <button class="modal-close" onclick="closeModal('raiseIssueModal')">&times;</button>
+      </div>
+      <form id="raiseIssueForm">
+        <div class="form-group">
+          <label>Title *</label>
+          <input type="text" name="title" required>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="description"></textarea>
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn">Raise Issue</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('raiseIssueModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+  </div>
+  
+  <script src="../js/auth.js"></script>
+  <script src="../js/siteEngineer.js"></script>
+  <script src="../js/templateSubmissions.js"></script>
+  <script src="../js/dailyWorkers.js"></script>
+</body>
+</html>

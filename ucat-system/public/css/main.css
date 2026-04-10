@@ -1,0 +1,834 @@
+/* UCAT Main CSS - Global Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --primary-color: #FFB300;
+  --primary-dark: #FF9500;
+  --primary-light: #FFC833;
+  --gray-light: #f5f5f5;
+  --gray-medium: #999;
+  --gray-dark: #333;
+  --border-color: #ddd;
+  --success-color: #4caf50;
+  --error-color: #d32f2f;
+  --warning-color: #ff9800;
+  --info-color: #2196f3;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f9f9f9;
+  color: var(--gray-dark);
+  line-height: 1.6;
+}
+
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button, input[type="button"], input[type="submit"] {
+  font-family: inherit;
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+}
+
+.toast {
+  background: white;
+  padding: 16px 24px;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  margin-bottom: 10px;
+  min-width: 300px;
+  animation: slideInRight 0.3s ease-out;
+}
+
+.toast.success {
+  border-left: 4px solid var(--success-color);
+  color: #2e7d32;
+}
+
+.toast.error {
+  border-left: 4px solid var(--error-color);
+  color: #c62828;
+}
+
+.toast.warning {
+  border-left: 4px solid var(--warning-color);
+  color: #e65100;
+}
+
+.toast.info {
+  border-left: 4px solid var(--info-color);
+  color: #1565c0;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Loading Spinner */
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9998;
+  display: none;
+}
+
+.loading-overlay.show {
+  display: flex;
+}
+
+.loading-content {
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+th {
+  background: var(--gray-light);
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--gray-dark);
+  border-bottom: 2px solid var(--border-color);
+  cursor: pointer;
+  user-select: none;
+}
+
+th:hover {
+  background: #efefef;
+}
+
+td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+tr:hover {
+  background: #fafafa;
+}
+
+/* Forms */
+.form-group {
+  margin-bottom: 20px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--gray-dark);
+  font-weight: 500;
+  font-size: 14px;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(255, 179, 0, 0.1);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: 10px 20px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.3s, box-shadow 0.3s;
+}
+
+.btn:hover {
+  background: var(--primary-dark);
+  box-shadow: 0 4px 12px rgba(255, 179, 0, 0.3);
+}
+
+.btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background: #666;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #444;
+}
+
+.btn-success {
+  background: var(--success-color);
+}
+
+.btn-success:hover {
+  background: #45a049;
+}
+
+.btn-danger {
+  background: var(--error-color);
+}
+
+.btn-danger:hover {
+  background: #b71c1c;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.btn-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Cards */
+.card {
+  background: white;
+  border-radius: 4px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.card-header {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--gray-dark);
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.card-body {
+  padding: 0;
+}
+
+/* Grid */
+.grid {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.grid-4 {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-primary {
+  background: #e3f2fd;
+  color: var(--primary-color);
+}
+
+.badge-success {
+  background: #e8f5e9;
+  color: var(--success-color);
+}
+
+.badge-danger {
+  background: #ffebee;
+  color: var(--error-color);
+}
+
+.badge-warning {
+  background: #fff3e0;
+  color: var(--warning-color);
+}
+
+.badge-secondary {
+  background: #f5f5f5;
+  color: #666;
+}
+
+/* Modals */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.modal.show {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background-color: white;
+  padding: 30px;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  color: var(--gray-dark);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .grid-2, .grid-3, .grid-4 {
+    grid-template-columns: 1fr;
+  }
+  
+  table {
+    font-size: 12px;
+  }
+  
+  th, td {
+    padding: 8px;
+  }
+}
+
+/* Utility Classes */
+.mt {
+  margin-top: 20px;
+}
+
+.mb {
+  margin-bottom: 20px;
+}
+
+.pt {
+  padding-top: 20px;
+}
+
+.pb {
+  padding-bottom: 20px;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.text-muted {
+  color: var(--gray-medium);
+}
+
+.text-success {
+  color: var(--success-color);
+}
+
+.text-danger {
+  color: var(--error-color);
+}
+
+.hidden {
+  display: none;
+}
+
+.flex {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flex-column {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* Overview section layout with proper grid */
+.overview-grid {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+/* KPI cards container with 3-column grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+/* Individual KPI card styling */
+.kpi-card {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-left: 4px solid var(--primary-color);
+  min-height: 90px;
+}
+
+/* Section heading styling */
+.section-heading {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--gray-dark);
+  margin-bottom: 1rem;
+  margin-top: 0;
+}
+
+/* Chart container with fixed height */
+.chart-container {
+  position: relative;
+  height: 400px;
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Canvas element inside chart container */
+.chart-container canvas {
+  max-height: 400px;
+}
+
+/* Activity feed wrapper */
+.activity-wrapper {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+/* Individual activity item */
+.activity-item {
+  padding: 15px 20px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+}
+
+/* Last activity item has no border */
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+/* Activity type badge/pill */
+.activity-type {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: #FFF8D6;
+  color: #3D2E00;
+  margin-bottom: 6px;
+}
+
+/* Activity content text */
+.activity-text {
+  flex: 1;
+}
+
+/* Activity name styling */
+.activity-name {
+  font-weight: 600;
+  color: var(--gray-dark);
+  margin-bottom: 2px;
+}
+
+/* Activity timestamp styling */
+.activity-time {
+  font-size: 12px;
+  color: var(--gray-medium);
+}
+
+/* Project Tabs Navigation */
+.project-tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid var(--border-color);
+  padding-bottom: 1rem;
+}
+
+/* Individual tab button styling */
+.tab-button {
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--gray-medium);
+  font-weight: 500;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1rem;
+}
+
+/* Active tab button styling */
+.tab-button.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+/* Tab button hover state */
+.tab-button:hover {
+  color: var(--primary-dark);
+}
+
+/* Tab content containers */
+.tab-content {
+  animation: fadeIn 0.3s ease;
+}
+
+/* Fade in animation for tab content */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Section headings within form */
+.form-container h3 {
+  color: var(--primary-color);
+  font-size: 18px;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 2px solid var(--primary-light);
+  padding-bottom: 0.5rem;
+}
+
+/* Projects list container */
+.projects-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 2rem;
+  margin-top: 2rem;
+}
+
+/* Project card styling */
+.project-card {
+  background: white;
+  border-left: 4px solid var(--primary-color);
+  border-radius: 6px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: all 0.3s ease;
+}
+
+/* Project card hover effect */
+.project-card:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+  transform: translateY(-2px);
+}
+
+/* Project card header with title and status */
+.project-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+/* Project card title */
+.project-card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--gray-dark);
+}
+
+/* Project status badge */
+.project-status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Ongoing project status badge */
+.status-ongoing {
+  background-color: rgba(33, 150, 243, 0.2);
+  color: #2196f3;
+}
+
+/* Completed project status badge */
+.status-completed {
+  background-color: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+/* Project card body with details */
+.project-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+/* Project detail row */
+.project-detail {
+  display: flex;
+  justify-content: space-between;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--gray-light);
+  font-size: 14px;
+}
+
+/* Project detail label */
+.project-detail-label {
+  font-weight: 600;
+  color: var(--gray-medium);
+}
+
+/* Project detail value */
+.project-detail-value {
+  color: var(--gray-dark);
+}
+
+/* Project card footer with action buttons */
+.project-card-footer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--gray-light);
+}
+
+/* View details button */
+.btn-view-details {
+  flex: 1;
+  padding: 8px 12px;
+  background-color: var(--info-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.3s ease;
+}
+
+.btn-view-details:hover {
+  background-color: #1976d2;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 1024px) {
+  /* 2-column grid on tablets */
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  /* 1-column grid on mobile */
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  /* Smaller chart on mobile */
+  .chart-container {
+    height: 300px;
+  }
+
+  /* Stack project tabs vertically on mobile */
+  .project-tabs {
+    flex-direction: column;
+  }
+
+  /* Single column project cards on mobile */
+  .projects-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Badge styling for status and file types */
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Success badge styling (green) */
+.badge-success {
+  background-color: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+/* Danger badge styling (red) */
+.badge-danger {
+  background-color: rgba(211, 47, 47, 0.2);
+  color: #d32f2f;
+}
+
+/* Info badge styling (blue) */
+.badge-info {
+  background-color: rgba(33, 150, 243, 0.2);
+  color: #2196f3;
+}
+
+/* Warning badge styling (orange) */
+.badge-warning {
+  background-color: rgba(255, 152, 0, 0.2);
+  color: #ff9800;
+}
+

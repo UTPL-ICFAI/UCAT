@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UCAT - Project Manager Dashboard</title>
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/dashboard.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+  <div class="dashboard">
+    <div class="sidebar">
+      <div class="sidebar-header">UCAT PM</div>
+      <div class="sidebar-user">
+        <div class="user-name" id="userName">Project Manager</div>
+        <div class="user-role">Project Manager</div>
+      </div>
+      <div style="padding: 15px 20px;">
+        <input type="text" id="projectSearch" placeholder="Search projects..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <ul class="sidebar-nav" id="projectList">
+        <li><a href="#" class="nav-link">Loading projects...</a></li>
+      </ul>
+      <div class="sidebar-footer">
+        <button class="logout-btn" onclick="logoutUser()">Logout</button>
+      </div>
+    </div>
+    
+    <div class="main-content" id="mainContent">
+      <div class="top-bar">
+        <h1 class="page-title" id="pageTitle">My Projects</h1>
+      </div>
+      
+      <!-- Projects Grid -->
+      <div id="projectsGrid" class="grid grid-2">
+        <div style="text-align: center; padding: 40px; color: #999;">Loading projects...</div>
+      </div>
+      
+      <!-- Project Detail View -->
+      <div id="projectDetail" style="display: none;">
+        <div class="card">
+          <div class="card-header">Project Details</div>
+          <div id="projectInfo"></div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs" style="margin-top: 20px;">
+          <button class="tab active" onclick="switchTab(event, 'overview')">Overview</button>
+          <button class="tab" onclick="switchTab(event, 'tasks')">Tasks</button>
+          <button class="tab" onclick="switchTab(event, 'submissions')">Template Submissions</button>
+          <button class="tab" onclick="switchTab(event, 'images')">Site Images</button>
+          <button class="tab" onclick="switchTab(event, 'documents')">Documents</button>
+          <button class="tab" onclick="switchTab(event, 'issues')">Issues</button>
+          <button class="tab" onclick="switchTab(event, 'communication')">Communication</button>
+        </div>
+        
+        <!-- Overview Tab -->
+        <div id="overview" class="tab-content active">
+          <div class="grid grid-2">
+            <div>
+              <h3>Budget Tracking</h3>
+              <p>Total Budget: <strong id="totalBudget">₹0</strong></p>
+              <p>Spent: <strong id="spentAmount">₹0</strong></p>
+              <p>Remaining: <strong id="remainingAmount">₹0</strong></p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="budgetProgress" style="width: 0%;"></div>
+              </div>
+            </div>
+            <div>
+              <h3>Progress</h3>
+              <p>Tasks Completed: <strong id="tasksCompleted">0</strong> / <strong id="tasksTotal">0</strong></p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="tasksProgress" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="chart-container" style="margin-top: 20px;">
+            <canvas id="pmBudgetChart"></canvas>
+          </div>
+          <div class="card" style="margin-top: 20px;">
+            <div class="card-header">Assigned Team</div>
+            <ul id="teamList" style="list-style: none; padding: 0;"></ul>
+          </div>
+        </div>
+        
+        <!-- Tasks Tab -->
+        <div id="tasks" class="tab-content">
+          <button class="btn" style="margin-bottom: 15px;" onclick="openAddTaskModal()">Add Task</button>
+          <table id="tasksTable">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Assigned To</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tasksTableBody">
+              <tr><td colspan="5">Loading tasks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Submissions Tab -->
+        <div id="submissions" class="tab-content">
+          <h3>Template Submissions Review</h3>
+          <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">Filter Submissions</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; padding: 15px;">
+              <div class="form-group">
+                <label>Template</label>
+                <select id="pmSubmissionTemplateFilter" class="form-control" onchange="loadPMSubmissions()">
+                  <option value="">All Templates</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Status</label>
+                <select id="pmSubmissionStatusFilter" class="form-control" onchange="loadPMSubmissions()">
+                  <option value="">All Status</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Date</label>
+                <input type="date" id="pmSubmissionDateFilter" class="form-control" onchange="loadPMSubmissions()">
+              </div>
+            </div>
+          </div>
+          <table id="submissionsTable">
+            <thead>
+              <tr>
+                <th>Template</th>
+                <th>Submitted By</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Submitted On</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="submissionsTableBody">
+              <tr><td colspan="6" style="text-align: center; padding: 20px;">Loading submissions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Site Images Tab -->
+        <div id="images" class="tab-content">
+          <h3>Approved Images</h3>
+          <div class="gallery-grid" id="imagesGallery"></div>
+        </div>
+        
+        <!-- Documents Tab -->
+        <div id="documents" class="tab-content">
+          <button class="btn" style="margin-bottom: 15px;" onclick="openUploadDocModal()">Upload Document</button>
+          <div class="filter-row">
+            <div class="filter-group">
+              <label>Search:</label>
+              <input type="text" id="docSearch" placeholder="Search by title or drawing number">
+            </div>
+            <button class="btn btn-secondary btn-small" onclick="exportDocsCSV()">Export CSV</button>
+          </div>
+          <div style="overflow-x: auto;">
+            <table id="documentsTable">
+              <thead>
+                <tr>
+                  <th>Document</th>
+                  <th>Drawing No</th>
+                  <th>Status</th>
+                  <th>Category</th>
+                  <th>Uploaded By</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody id="documentsTableBody">
+                <tr><td colspan="6">Loading documents...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- Issues Tab -->
+        <div id="issues" class="tab-content">
+          <table id="issuesTable">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Raised By</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="issuesTableBody">
+              <tr><td colspan="5">Loading issues...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Communication Tab -->
+        <div id="communication" class="tab-content">
+          <div style="background: #f9f9f9; padding: 15px; border-radius: 4px; height: 400px; overflow-y: auto; margin-bottom: 15px;" id="chatMessages"></div>
+          <div style="display: flex; gap: 10px;">
+            <textarea id="messageInput" placeholder="Type a message..." style="flex: 1; height: 60px; resize: none;"></textarea>
+            <button class="btn" onclick="sendMessage()" style="height: 60px; align-self: flex-end;">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Add Task Modal -->
+  <div id="addTaskModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span>Add New Task</span>
+        <button class="modal-close" onclick="closeModal('addTaskModal')">&times;</button>
+      </div>
+      <form id="addTaskForm">
+        <div class="form-group">
+          <label>Task Title *</label>
+          <input type="text" name="title" required>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="description"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Assign To (Site Engineer) *</label>
+          <select name="assigned_to" id="taskAssignSelect" required></select>
+        </div>
+        <div class="form-group">
+          <label>Due Date</label>
+          <input type="date" name="due_date">
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn">Create Task</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('addTaskModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Upload Document Modal -->
+  <div id="uploadDocModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <span>Upload Document</span>
+        <button class="modal-close" onclick="closeModal('uploadDocModal')">&times;</button>
+      </div>
+      <form id="uploadDocForm">
+        <div class="form-group">
+          <label>Document File *</label>
+          <input type="file" name="document" accept=".pdf,.zip,.png,.jpg,.jpeg" required>
+        </div>
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" name="title">
+        </div>
+        <div class="form-group">
+          <label>Drawing Number</label>
+          <input type="text" name="drawing_no">
+        </div>
+        <div class="form-group">
+          <label>Discipline</label>
+          <input type="text" name="discipline">
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <input type="text" name="category">
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn">Upload</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('uploadDocModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Review Submission Modal -->
+  <div id="reviewSubmissionModal" class="modal">
+    <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+      <div class="modal-header">
+        <span id="reviewModalTitle">Review Submission</span>
+        <button class="modal-close" onclick="closeModal('reviewSubmissionModal')">&times;</button>
+      </div>
+      <div style="padding: 20px;">
+        <div id="reviewSubmissionContent"></div>
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; display: flex; gap: 10px;">
+          <button class="btn btn-success" onclick="approveSubmission()">✓ Approve</button>
+          <button class="btn btn-danger" onclick="rejectSubmissionModal()">✗ Reject</button>
+          <button class="btn btn-secondary" onclick="closeModal('reviewSubmissionModal')" style="margin-left: auto;">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Reject Reason Modal -->
+  <div id="rejectReasonModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <span>Reject Submission</span>
+        <button class="modal-close" onclick="closeModal('rejectReasonModal')">&times;</button>
+      </div>
+      <div style="padding: 20px;">
+        <div class="form-group">
+          <label>Reason for Rejection *</label>
+          <textarea id="rejectReason" class="form-control" required placeholder="Explain why this submission is being rejected..." style="height: 120px;"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-danger" onclick="confirmRejection()">Reject</button>
+          <button class="btn btn-secondary" onclick="closeModal('rejectReasonModal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+  </div>
+  
+  <script src="../js/auth.js"></script>
+  <script src="../js/projectManager.js"></script>
+  <script src="../js/submissionReview.js"></script>
+</body>
+</html>

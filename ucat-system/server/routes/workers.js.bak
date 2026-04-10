@@ -1,0 +1,155 @@
+import express from 'express';
+import pool from '../db.js';
+import { requireRole } from '../middleware/role.js';
+
+const router = express.Router();
+
+// Create worker (Site Engineer only)
+router.post('/', requireRole('site_engineer'), async (req, res) => {
+  // Handler: POST /api/workers - Create new worker record
+  try {
+    // Destructure required fields from request body
+    const { name, age, gender, project_id, supervisor_id } = req.body;
+    
+    // Validate all required fields are present
+    if (!name || !project_id || !supervisor_id) {
+      // Return 400 error if missing required fields
+      return res.status(400).json({ error: 'name, project_id, and supervisor_id are required' });
+    }
+    
+    // Validate age if provided
+    if (age !== undefined && age !== null) {
+      // Check if age is integer and between 1 and 99
+      if (!Number.isInteger(Number(age)) || age < 1 || age > 99) {
+        // Return 400 error for invalid age
+        return res.status(400).json({ error: 'Age must be an integer between 1 and 99' });
+      }
+    }
+    
+    // Validate gender if provided
+    if (gender && !['male', 'female', 'other'].includes(gender.toLowerCase())) {
+      // Return 400 error for invalid gender
+      return res.status(400).json({ error: 'Gender must be male, female, or other' });
+    }
+    
+    // Verify Site Engineer is assigned to this project
+    const assignmentResult = await pool.query(
+      // Query to check project assignment
+      'SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = $3',
+      // Parameters: project_id, current user ID, role filter
+      [project_id, req.user.id, 'site_engineer']
+    );
+    
+    // Check if assignment record exists
+    if (assignmentResult.rows.length === 0) {
+      // Return 403 forbidden if SE not assigned to project
+      return res.status(403).json({ error: 'Not assigned to this project' });
+    }
+    
+    // Insert new worker record into database
+    const result = await pool.query(
+      // SQL insert statement with all worker fields
+      `INSERT INTO workers (name, age, gender, project_id, supervisor_id, site_engineer_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      // Array of parameter values in order
+      [name, age || null, gender ? gender.toLowerCase() : null, project_id, supervisor_id, req.user.id]
+    );
+    
+    // Return 201 created status with new worker data
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Create worker error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to create worker' });
+  }
+});
+
+// Get workers with optional project filter
+router.get('/', async (req, res) => {
+  // Handler: GET /api/workers?project_id=X - Fetch workers with supervisor/SE names
+  try {
+    // Extract project_id from query parameters
+    const { project_id } = req.query;
+    
+    // Build base SQL query with JOIN to get user names
+    let query = `
+      SELECT w.*, u1.name as supervisor_name, u2.name as site_engineer_name 
+      FROM workers w 
+      LEFT JOIN users u1 ON w.supervisor_id = u1.id 
+      LEFT JOIN users u2 ON w.site_engineer_id = u2.id 
+      WHERE 1=1
+    `;
+    // Initialize empty parameters array
+    const params = [];
+    
+    // Add project_id filter if provided
+    if (project_id) {
+      // Append project_id WHERE clause
+      query += ' AND w.project_id = $1';
+      // Push project_id to parameters
+      params.push(project_id);
+    }
+    
+    // Add ORDER BY clause to sort by creation date descending
+    query += ' ORDER BY w.created_at DESC';
+    
+    // Execute query with parameters
+    const result = await pool.query(query, params);
+    // Return workers array as JSON
+    res.json(result.rows);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Get workers error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to fetch workers' });
+  }
+});
+
+// Delete worker (Site Engineer only)
+router.delete('/:id', requireRole('site_engineer'), async (req, res) => {
+  // Handler: DELETE /api/workers/:id - Remove worker record
+  try {
+    // Extract worker ID from URL parameter
+    const { id } = req.params;
+    
+    // Query to get worker details
+    const workerResult = await pool.query('SELECT * FROM workers WHERE id = $1', [id]);
+    // Check if worker record exists
+    if (workerResult.rows.length === 0) {
+      // Return 404 error if worker not found
+      return res.status(404).json({ error: 'Worker not found' });
+    }
+    
+    // Extract worker data from result
+    const worker = workerResult.rows[0];
+    
+    // Verify Site Engineer is assigned to the project this worker belongs to
+    const assignmentResult = await pool.query(
+      // Query to check project assignment
+      'SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = $3',
+      // Parameters: worker's project_id, current user ID, role filter
+      [worker.project_id, req.user.id, 'site_engineer']
+    );
+    
+    // Check if assignment record exists
+    if (assignmentResult.rows.length === 0) {
+      // Return 403 forbidden if SE not assigned to worker's project
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    
+    // Execute DELETE statement to remove worker
+    await pool.query('DELETE FROM workers WHERE id = $1', [id]);
+    // Return success response
+    res.json({ success: true });
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Delete worker error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to delete worker' });
+  }
+});
+
+// Export router for use in main application
+export default router;

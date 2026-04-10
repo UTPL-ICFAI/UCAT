@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UCAT - Supervisor Dashboard</title>
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/dashboard.css">
+</head>
+<body>
+  <div style="display: flex; flex-direction: column; min-height: 100vh;">
+    <nav class="top-nav">
+      <h1 class="top-nav-brand">UCAT</h1>
+      <ul class="top-nav-menu">
+        <li class="top-nav-item"><a href="#projects" class="top-nav-link active" onclick="navigateSection('projects')">My Projects</a></li>
+        <li class="top-nav-item"><a href="#attendance" class="top-nav-link" onclick="navigateSection('attendance')">Attendance</a></li>
+        <li class="top-nav-item"><a href="#upload" class="top-nav-link" onclick="navigateSection('upload')">Upload Images</a></li>
+        <li class="top-nav-item"><a href="#issues" class="top-nav-link" onclick="navigateSection('issues')">Issues</a></li>
+      </ul>
+      <div class="top-nav-user">
+        <span>Welcome, <strong id="userName">Supervisor</strong></span>
+        <button class="top-nav-logout" onclick="logoutUser()">Logout</button>
+      </div>
+    </nav>
+    
+    <div style="flex: 1; padding: 30px; background: #f5f5f5;">
+      <!-- My Projects Section -->
+      <section id="projects" class="page-section">
+        <div class="top-bar">
+          <h1 class="page-title">My Projects</h1>
+        </div>
+        <div id="projectsGrid" class="grid grid-3">
+          <div style="text-align: center; padding: 40px;">Loading...</div>
+        </div>
+      </section>
+      
+      <!-- Attendance Section -->
+      <section id="attendance" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Mark Attendance</h1>
+        </div>
+        
+        <div class="card">
+          <div class="form-group">
+            <label>Select Project *</label>
+            <select id="attendanceProjectSelect" onchange="loadAttendanceWorkers()" required>
+              <option value="">Choose a project...</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label>Select Date *</label>
+            <input type="date" id="attendanceDate" required>
+          </div>
+          
+          <div id="attendanceForm" style="display: none;">
+            <table id="attendanceTable">
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceTableBody">
+                <tr><td colspan="2">Loading workers...</td></tr>
+              </tbody>
+            </table>
+            
+            <div class="btn-group" style="margin-top: 20px;">
+              <button class="btn" onclick="submitAttendance()">Submit Attendance</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Upload Images Section -->
+      <section id="upload" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Upload Site Images</h1>
+        </div>
+        
+        <div class="card">
+          <div class="form-group">
+            <label>Select Project *</label>
+            <select id="uploadProjectSelect" required>
+              <option value="">Choose a project...</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label>Select Images (JPEG/PNG, max 10MB each) *</label>
+            <input type="file" id="imageInput" multiple accept=".jpg,.jpeg,.png" required>
+            <div id="imagePreview" style="margin-top: 15px;"></div>
+          </div>
+          
+          <div class="form-group">
+            <label>Description (optional)</label>
+            <textarea id="imageDescription" placeholder="Add description for all images"></textarea>
+          </div>
+          
+          <div class="btn-group">
+            <button class="btn" onclick="uploadImages()">Upload Images</button>
+          </div>
+        </div>
+        
+        <div class="card" style="margin-top: 20px;">
+          <div class="card-header">Your Recent Uploads</div>
+          <div class="gallery-grid" id="recentUploadsGallery"></div>
+        </div>
+      </section>
+      
+      <!-- Issues Section -->
+      <section id="issues" class="page-section hidden">
+        <div class="top-bar flex-between">
+          <h1 class="page-title">Troubleshoot Issues</h1>
+          <button class="btn" onclick="openRaiseIssueModal()">Raise New Issue</button>
+        </div>
+        
+        <div class="card">
+          <table id="issuesTable">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="issuesTableBody">
+              <tr><td colspan="4">Loading issues...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  
+  <!-- Raise Issue Modal -->
+  <div id="raiseIssueModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span>Raise New Issue</span>
+        <button class="modal-close" onclick="closeModal('raiseIssueModal')">&times;</button>
+      </div>
+      <form id="raiseIssueForm">
+        <div class="form-group">
+          <label>Select Project *</label>
+          <select name="project_id" id="issueProjectSelect" required></select>
+        </div>
+        <div class="form-group">
+          <label>Title *</label>
+          <input type="text" name="title" required>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="description"></textarea>
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn">Raise Issue</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('raiseIssueModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+  </div>
+  
+  <script src="../js/auth.js"></script>
+  <script src="../js/supervisor.js"></script>
+</body>
+</html>

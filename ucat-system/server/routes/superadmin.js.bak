@@ -1,0 +1,414 @@
+import express from 'express';
+import pool from '../db.js';
+import bcrypt from 'bcrypt';
+import { requireRole } from '../middleware/role.js';
+
+const router = express.Router();
+
+// Get KPI statistics with gender breakdown
+router.get('/stats', requireRole('superadmin'), async (req, res) => {
+  // Handler: GET /api/superadmin/stats - Fetch all KPI statistics
+  try {
+    // Query 1: Count total projects
+    const projectCount = await pool.query('SELECT COUNT(*) as count FROM projects');
+    // Query 2: Count active projects only
+    const activeProjects = await pool.query("SELECT COUNT(*) as count FROM projects WHERE work_status = 'active'");
+    // Query 3: Count total users
+    const userCount = await pool.query('SELECT COUNT(*) as count FROM users');
+    // Query 4: Count open issues
+    const openIssues = await pool.query("SELECT COUNT(*) as count FROM troubleshoot_issues WHERE status = 'open'");
+    // Query 5: Count total workers on site
+    const workers = await pool.query('SELECT COUNT(*) as count FROM workers');
+    // Query 6: Count total documents uploaded
+    const documents = await pool.query('SELECT COUNT(*) as count FROM documents');
+    // Query 7: Count workers by gender breakdown
+    const genderBreakdown = await pool.query(`
+      SELECT gender, COUNT(*) as count FROM workers WHERE gender IS NOT NULL GROUP BY gender
+    `);
+    
+    // Build gender breakdown object
+    const genderStats = {};
+    // Initialize all gender types to 0
+    genderStats.male = 0;
+    genderStats.female = 0;
+    genderStats.other = 0;
+    // Populate with actual counts from database
+    genderBreakdown.rows.forEach(row => {
+      genderStats[row.gender] = parseInt(row.count);
+    });
+    
+    // Return all statistics as JSON response
+    res.json({
+      // Total number of projects in system
+      totalProjects: parseInt(projectCount.rows[0].count),
+      // Count of projects with active status
+      activeProjects: parseInt(activeProjects.rows[0].count),
+      // Total count of user accounts
+      totalUsers: parseInt(userCount.rows[0].count),
+      // Number of open/unresolved issues
+      openIssues: parseInt(openIssues.rows[0].count),
+      // Total workers currently on sites
+      workersOnSite: parseInt(workers.rows[0].count),
+      // Number of uploaded project documents
+      documentsUploaded: parseInt(documents.rows[0].count),
+      // Gender breakdown of workers
+      workerGenderBreakdown: genderStats
+    });
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Stats error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// Get recent activity feed
+router.get('/activity', requireRole('superadmin'), async (req, res) => {
+  // Handler: GET /api/superadmin/activity - Fetch recent activity across all modules
+  try {
+    // Query recent activity from all tables with UNION
+    const result = await pool.query(`
+      SELECT 'project_created' as type, name as description, created_at, NULL::INTEGER as user_id FROM projects
+      UNION ALL
+      SELECT 'user_created' as type, name as description, created_at, NULL::INTEGER as user_id FROM users
+      UNION ALL
+      SELECT 'task_created' as type, title as description, created_at, assigned_by as user_id FROM tasks
+      UNION ALL
+      SELECT 'image_uploaded' as type, original_name as description, upload_timestamp as created_at, uploaded_by as user_id FROM site_images
+      UNION ALL
+      SELECT 'document_uploaded' as type, title as description, created_at, uploaded_by as user_id FROM documents
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+    
+    // Return array of activity events
+    res.json(result.rows);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Activity error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to fetch activity' });
+  }
+});
+
+// Get users with optional role filter
+router.get('/users', requireRole('superadmin'), async (req, res) => {
+  // Handler: GET /api/superadmin/users?role=X - Fetch users with optional role filtering
+  try {
+    // Extract role parameter from query string
+    const { role } = req.query;
+    
+    // Determine SQL query based on whether role filter is provided
+    let query = 'SELECT id, name, age, gender, employment_id, role, user_id, created_at FROM users';
+    // Add WHERE clause if role filter specified
+    if (role) {
+      // Append role filter to query
+      query += ` WHERE role = $1`;
+      // Execute query with role parameter
+      const result = await pool.query(query + ' ORDER BY created_at DESC', [role]);
+      // Return filtered user list as JSON
+      return res.json(result.rows);
+    }
+    
+    // If no role filter, append order by clause
+    query += ' ORDER BY created_at DESC';
+    // Execute query without parameters
+    const result = await pool.query(query);
+    // Return all users as JSON
+    res.json(result.rows);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Get users error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Create new user
+router.post('/users', requireRole('superadmin'), async (req, res) => {
+  // Handler: POST /api/superadmin/users - Create new user account
+  try {
+    // Destructure all user fields from request body
+    const { name, age, gender, employment_id, role, user_id, password } = req.body;
+    
+    // Validate all required fields are present
+    if (!name || !employment_id || !role || !user_id || !password) {
+      // Return 400 error if any required field missing
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    // Validate age is numeric and within valid range
+    if (age !== undefined && age !== null) {
+      // Check if age is integer and between 1 and 99
+      if (!Number.isInteger(Number(age)) || age < 1 || age > 99) {
+        // Return 400 error for invalid age
+        return res.status(400).json({ error: 'Age must be an integer between 1 and 99' });
+      }
+    }
+    
+    // Validate gender is one of allowed values
+    if (gender && !['male', 'female', 'other'].includes(gender.toLowerCase())) {
+      // Return 400 error for invalid gender
+      return res.status(400).json({ error: 'Gender must be male, female, or other' });
+    }
+    
+    // Hash password using bcrypt with 10 rounds
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Insert new user into database
+    const userResult = await pool.query(
+      // SQL insert statement with parameterized values
+      `INSERT INTO users (name, age, gender, employment_id, role, user_id, password_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, name, age, gender, employment_id, role, user_id`,
+      // Array of parameter values in order
+      [name, age || null, gender ? gender.toLowerCase() : null, employment_id, role, user_id, hashedPassword]
+    );
+    
+    // Extract inserted user data from query result
+    const newUser = userResult.rows[0];
+    
+    // Create default permissions record for new user
+    await pool.query(
+      // SQL insert for permissions with all flags false initially
+      `INSERT INTO permissions (user_id, can_view_documents, can_upload_documents, can_view_images, can_create_tasks, can_view_reports, can_manage_workers)
+       VALUES ($1, false, false, false, false, false, false)`,
+      // Pass the new user's ID
+      [newUser.id]
+    );
+    
+    // Return 201 created status with new user data
+    res.status(201).json(newUser);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Create user error:', error);
+    // Check for duplicate user_id or employment_id
+    if (error.code === '23505') {
+      // Return 400 error for duplicate unique constraint violation
+      res.status(400).json({ error: 'User ID or Employment ID already exists' });
+    } else {
+      // Return generic 500 error for other database errors
+      res.status(500).json({ error: 'Failed to create user' });
+    }
+  }
+});
+
+// Update existing user
+router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
+  // Handler: PUT /api/superadmin/users/:id - Update user profile
+  try {
+    // Extract user ID from URL parameter
+    const { id } = req.params;
+    // Destructure editable fields from request body
+    const { name, age, gender, employment_id, role, password } = req.body;
+    
+    // Validate age if provided
+    if (age !== undefined && age !== null) {
+      // Check if age is integer and between 1 and 99
+      if (!Number.isInteger(Number(age)) || age < 1 || age > 99) {
+        // Return 400 error for invalid age
+        return res.status(400).json({ error: 'Age must be an integer between 1 and 99' });
+      }
+    }
+    
+    // Validate gender if provided
+    if (gender && !['male', 'female', 'other'].includes(gender.toLowerCase())) {
+      // Return 400 error for invalid gender
+      return res.status(400).json({ error: 'Gender must be male, female, or other' });
+    }
+    
+    // Hash new password if provided, otherwise use existing hash
+    let passwordHash = null;
+    // Check if password field was provided and not empty
+    if (password && password.trim() !== '') {
+      // Hash new password with bcrypt 10 rounds
+      passwordHash = await bcrypt.hash(password, 10);
+    }
+    
+    // Build dynamic SQL update statement
+    let updateFields = [];
+    let updateValues = [];
+    let paramIndex = 1;
+    
+    // Add name field if provided
+    if (name) {
+      updateFields.push(`name = $${paramIndex}`);
+      updateValues.push(name);
+      paramIndex++;
+    }
+    
+    // Add age field if provided
+    if (age !== undefined && age !== null) {
+      updateFields.push(`age = $${paramIndex}`);
+      updateValues.push(age);
+      paramIndex++;
+    }
+    
+    // Add gender field if provided
+    if (gender) {
+      updateFields.push(`gender = $${paramIndex}`);
+      updateValues.push(gender.toLowerCase());
+      paramIndex++;
+    }
+    
+    // Add employment_id field if provided
+    if (employment_id) {
+      updateFields.push(`employment_id = $${paramIndex}`);
+      updateValues.push(employment_id);
+      paramIndex++;
+    }
+    
+    // Add role field if provided
+    if (role) {
+      updateFields.push(`role = $${paramIndex}`);
+      updateValues.push(role);
+      paramIndex++;
+    }
+    
+    // Add password_hash field if new password provided
+    if (passwordHash) {
+      updateFields.push(`password_hash = $${paramIndex}`);
+      updateValues.push(passwordHash);
+      paramIndex++;
+    }
+    
+    // Only proceed if there are fields to update
+    if (updateFields.length === 0) {
+      // Return 400 error if no update fields provided
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    // Add user ID parameter
+    updateValues.push(id);
+    
+    // Execute update query with all provided fields
+    const result = await pool.query(
+      // Build dynamic SQL with all update fields
+      `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING id, name, age, gender, employment_id, role, user_id`,
+      updateValues
+    );
+    
+    // Check if user was found
+    if (result.rows.length === 0) {
+      // Return 404 error if user not found
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Return updated user data as JSON
+    res.json(result.rows[0]);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Update user error:', error);
+    // Check for duplicate constraint violation
+    if (error.code === '23505') {
+      // Return 400 error for duplicate employment_id
+      res.status(400).json({ error: 'Employment ID already exists' });
+    } else {
+      // Return generic 500 error for other database errors
+      res.status(500).json({ error: 'Failed to update user' });
+    }
+  }
+});
+
+// Delete user
+router.delete('/users/:id', requireRole('superadmin'), async (req, res) => {
+  // Handler: DELETE /api/superadmin/users/:id - Remove user from system
+  try {
+    // Extract user ID from URL parameter
+    const { id } = req.params;
+    
+    // Query to check if user exists and get their role
+    const userResult = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+    // Check if user record was found
+    if (userResult.rows.length === 0) {
+      // Return 404 error if user not found
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Prevent deletion of superadmin accounts
+    if (userResult.rows[0].role === 'superadmin') {
+      // Return 400 error if trying to delete superadmin
+      return res.status(400).json({ error: 'Cannot delete superadmin' });
+    }
+    
+    // Execute DELETE statement to remove user
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    // Return success response
+    res.json({ success: true });
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Delete user error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// Get user permissions
+router.get('/permissions/:userId', requireRole('superadmin'), async (req, res) => {
+  // Handler: GET /api/superadmin/permissions/:userId - Fetch user permissions
+  try {
+    // Extract user ID from URL parameter
+    const { userId } = req.params;
+    
+    // Query permissions record for this user
+    const result = await pool.query(
+      // SQL select from permissions table
+      'SELECT * FROM permissions WHERE user_id = $1',
+      // Pass user ID parameter
+      [userId]
+    );
+    
+    // Check if permissions record exists
+    if (result.rows.length === 0) {
+      // Return 404 error if not found
+      return res.status(404).json({ error: 'Permissions not found' });
+    }
+    
+    // Return permissions object as JSON
+    res.json(result.rows[0]);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Get permissions error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to fetch permissions' });
+  }
+});
+
+// Update user permissions
+router.put('/permissions/:userId', requireRole('superadmin'), async (req, res) => {
+  // Handler: PUT /api/superadmin/permissions/:userId - Update user permission flags
+  try {
+    // Extract user ID from URL parameter
+    const { userId } = req.params;
+    // Destructure all permission flags from request body
+    const { can_view_documents, can_upload_documents, can_view_images, can_create_tasks, can_view_reports, can_manage_workers } = req.body;
+    
+    // Execute update statement for permissions table
+    const result = await pool.query(
+      // SQL update with all permission flags
+      `UPDATE permissions 
+       SET can_view_documents = $1, can_upload_documents = $2, can_view_images = $3, can_create_tasks = $4, can_view_reports = $5, can_manage_workers = $6
+       WHERE user_id = $7
+       RETURNING *`,
+      // Array of parameter values in order
+      [can_view_documents, can_upload_documents, can_view_images, can_create_tasks, can_view_reports, can_manage_workers, userId]
+    );
+    
+    // Check if permissions record was found and updated
+    if (result.rows.length === 0) {
+      // Return 404 error if permissions not found
+      return res.status(404).json({ error: 'Permissions not found' });
+    }
+    
+    // Return updated permissions object as JSON
+    res.json(result.rows[0]);
+  } catch (error) {
+    // Log error to console for debugging
+    console.error('Update permissions error:', error);
+    // Return 500 error response
+    res.status(500).json({ error: 'Failed to update permissions' });
+  }
+});
+
+// Export router for use in main application
+export default router;

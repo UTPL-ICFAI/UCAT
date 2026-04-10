@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Set character encoding to UTF-8 -->
+  <meta charset="UTF-8">
+  <!-- Set viewport for responsive design -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Page title -->
+  <title>UCAT - Superadmin Dashboard</title>
+  <!-- Link global stylesheet -->
+  <link rel="stylesheet" href="../css/main.css">
+  <!-- Link dashboard-specific stylesheet -->
+  <link rel="stylesheet" href="../css/dashboard.css">
+  <!-- Include Chart.js library from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+  <!-- Main dashboard container -->
+  <div class="dashboard">
+    <!-- Sidebar navigation -->
+    <div class="sidebar">
+      <!-- Sidebar header with app name -->
+      <div class="sidebar-header">UCAT</div>
+      <!-- User information display -->
+      <div class="sidebar-user">
+        <!-- Dynamic user name -->
+        <div class="user-name" id="userName">Admin</div>
+        <!-- User role display -->
+        <div class="user-role">Superadmin</div>
+      </div>
+      <!-- Navigation links -->
+      <ul class="sidebar-nav">
+        <!-- Overview section link (active by default) -->
+        <li><a href="#overview" class="nav-link active">Overview</a></li>
+        <!-- Create project section link -->
+        <li><a href="#create-project" class="nav-link">Create Project</a></li>
+        <!-- Manage users section link -->
+        <li><a href="#manage-users" class="nav-link">Manage Users</a></li>
+        <!-- Permissions section link -->
+        <li><a href="#permissions" class="nav-link">Permissions</a></li>
+        <!-- Troubleshoot issues section link -->
+        <li><a href="#troubleshoot" class="nav-link">Troubleshoot Issues</a></li>
+      </ul>
+      <!-- Sidebar footer with logout button -->
+      <div class="sidebar-footer">
+        <!-- Logout button calling logoutUser function -->
+        <button class="logout-btn" onclick="logoutUser()">Logout</button>
+      </div>
+    </div>
+    
+    <!-- Main content area -->
+    <div class="main-content">
+      <!-- Overview Section -->
+      <section id="overview" class="page-section">
+        <!-- Top bar with page title -->
+        <div class="top-bar">
+          <!-- Page title -->
+          <h1 class="page-title">Dashboard Overview</h1>
+        </div>
+        
+        <!-- KPI cards grid with 3 columns -->
+        <div class="grid grid-3" id="kpiGrid">
+          <!-- Total Projects KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Total Projects</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="totalProjects">0</p>
+          </div>
+          <!-- Active Projects KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Active Projects</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="activeProjects">0</p>
+          </div>
+          <!-- Total Users KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Total Users</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="totalUsers">0</p>
+          </div>
+          <!-- Open Issues KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Open Issues</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="openIssues">0</p>
+          </div>
+          <!-- Workers On Site KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Workers On Site</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="workersOnSite">0</p>
+          </div>
+          <!-- Documents Uploaded KPI -->
+          <div class="kpi-card">
+            <!-- Label for KPI -->
+            <div class="kpi-label">Documents Uploaded</div>
+            <!-- Dynamic value -->
+            <p class="kpi-value" id="documentsUploaded">0</p>
+          </div>
+        </div>
+        
+        <!-- Gender breakdown statistics container -->
+        <div id="genderBreakdownStats" style="padding: 20px; background: #f5f5f5; border-radius: 8px; margin: 20px 0;"></div>
+        
+        <!-- Chart container for budget visualization -->
+        <div class="chart-container">
+          <!-- Canvas for Chart.js -->
+          <canvas id="budgetChart"></canvas>
+        </div>
+        
+        <!-- Card container for activity feed -->
+        <div class="card">
+          <!-- Card header title -->
+          <div class="card-header">Recent Activity</div>
+          <!-- Activity feed list -->
+          <div class="activity-feed" id="activityFeed">
+            <!-- Placeholder activity item -->
+            <div class="activity-item">
+              <!-- Activity icon -->
+              <div class="activity-icon">•</div>
+              <!-- Activity content -->
+              <div class="activity-content">
+                <!-- Activity title -->
+                <div class="activity-title">Loading activities...</div>
+                <!-- Activity time -->
+                <div class="activity-time">Just now</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Create Project Section -->
+      <section id="create-project" class="page-section hidden">
+        <!-- Top bar with page title -->
+        <div class="top-bar">
+          <!-- Page title -->
+          <h1 class="page-title">Create New Project</h1>
+        </div>
+        
+        <!-- Form card container -->
+        <div class="card">
+          <!-- Create project form -->
+          <form id="createProjectForm">
+            <!-- First row of form fields -->
+            <div class="form-row">
+              <!-- Project Name field -->
+              <div class="form-group">
+                <!-- Label with required indicator -->
+                <label>Project Name *</label>
+                <!-- Text input for project name -->
+                <input type="text" id="projectName" required>
+              </div>
+              <!-- City field -->
+              <div class="form-group">
+                <!-- Label with required indicator -->
+                <label>City *</label>
+                <!-- Text input for city -->
+                <input type="text" id="projectCity" required>
+              </div>
+            </div>
+            
+            <!-- Second row of form fields -->
+            <div class="form-row">
+              <!-- Location field -->
+              <div class="form-group">
+                <!-- Label with required indicator -->
+                <label>Location *</label>
+                <!-- Text input for location -->
+                <input type="text" id="projectLocation" required>
+              </div>
+              <!-- Contractor Name field -->
+              <div class="form-group">
+                <!-- Label without required indicator (optional) -->
+                <label>Contractor Name</label>
+                <!-- Text input for contractor name -->
+                <input type="text" id="contractorName">
+              </div>
+            </div>
+            
+            <!-- Project Manager selection section -->
+            <div class="form-group">
+              <!-- Label with required indicator -->
+              <label>Project Manager(s) *</label>
+              <!-- Multi-select dropdown for project managers -->
+              <select id="projectManagerSelect" multiple style="height: 100px;">
+                <!-- Default placeholder option -->
+                <option value="">Select Project Manager(s)</option>
+              </select>
+              <!-- Helper text explaining multi-select -->
+              <small>Hold Ctrl/Cmd to select multiple</small>
+            </div>
+            
+            <!-- Site Engineer selection section -->
+            <div class="form-group">
+              <!-- Label with required indicator -->
+              <label>Site Engineer(s) *</label>
+              <!-- Multi-select dropdown for site engineers -->
+              <select id="siteEngineerSelect" multiple style="height: 100px;">
+                <!-- Default placeholder option -->
+                <option value="">Select Site Engineer(s)</option>
+              </select>
+              <!-- Helper text explaining multi-select -->
+              <small>Hold Ctrl/Cmd to select multiple</small>
+            </div>
+            
+            <!-- Supervisor selection section -->
+            <div class="form-group">
+              <!-- Label with required indicator -->
+              <label>Supervisor(s) *</label>
+              <!-- Multi-select dropdown for supervisors -->
+              <select id="supervisorSelect" multiple style="height: 100px;">
+                <!-- Default placeholder option -->
+                <option value="">Select Supervisor(s)</option>
+              </select>
+              <!-- Helper text explaining multi-select -->
+              <small>Hold Ctrl/Cmd to select multiple</small>
+            </div>
+            
+            <!-- Form submission button -->
+            <button type="submit" class="btn btn-primary" style="margin-top: 20px;">Create Project</button>
+          </form>
+        </div>
+      </section>
+      
+      <!-- Manage Users Section -->
+      <section id="manage-users" class="page-section hidden">
+        <!-- Top bar with title and action button -->
+        <div class="top-bar">
+          <!-- Page title -->
+          <h1 class="page-title">Manage Users</h1>
+          <!-- Add user button -->
+          <button class="btn btn-primary" onclick="openAddUserModal()" style="margin-left: auto;">+ Add User</button>
+        </div>
+        
+        <!-- Users filters section -->
+        <div class="card">
+          <!-- Filters container -->
+          <div class="filters">
+            <!-- User name search filter -->
+            <input type="text" id="userNameFilter" placeholder="Search by name..." class="filter-input">
+            <!-- User role dropdown filter -->
+            <select id="userRoleFilter" class="filter-input">
+              <!-- Default option showing all roles -->
+              <option value="">All Roles</option>
+              <!-- Project Manager option -->
+              <option value="project_manager">Project Manager</option>
+              <!-- Site Engineer option -->
+              <option value="site_engineer">Site Engineer</option>
+              <!-- Supervisor option -->
+              <option value="supervisor">Supervisor</option>
+            </select>
+            <!-- CSV export button -->
+            <button class="btn btn-secondary" onclick="exportUsersCSV()" style="margin-left: auto;">Export CSV</button>
+          </div>
+        </div>
+        
+        <!-- Users table card -->
+        <div class="card">
+          <!-- Table header -->
+          <table class="data-table">
+            <!-- Table header row -->
+            <thead>
+              <!-- Table header cells -->
+              <tr>
+                <!-- Name column header -->
+                <th>Name</th>
+                <!-- Age column header -->
+                <th>Age</th>
+                <!-- Gender column header -->
+                <th>Gender</th>
+                <!-- Employment ID column header -->
+                <th>Employment ID</th>
+                <!-- Role column header -->
+                <th>Role</th>
+                <!-- User ID column header -->
+                <th>User ID</th>
+                <!-- Created Date column header -->
+                <th>Created Date</th>
+                <!-- Actions column header -->
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <!-- Table body for dynamic content -->
+            <tbody id="usersTableBody">
+              <!-- Placeholder row showing loading state -->
+              <tr>
+                <!-- Colspan all columns -->
+                <td colspan="9" style="text-align: center; padding: 20px;">Loading users...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      
+      <!-- Permissions Section -->
+      <section id="permissions" class="page-section hidden">
+        <!-- Top bar with page title -->
+        <div class="top-bar">
+          <!-- Page title -->
+          <h1 class="page-title">Manage Permissions</h1>
+        </div>
+        
+        <!-- Permissions info card -->
+        <div class="card">
+          <!-- Info message -->
+          <p>Permissions management coming soon...</p>
+        </div>
+      </section>
+      
+      <!-- Troubleshoot Issues Section -->
+      <section id="troubleshoot" class="page-section hidden">
+        <!-- Top bar with page title -->
+        <div class="top-bar">
+          <!-- Page title -->
+          <h1 class="page-title">Troubleshoot Issues</h1>
+        </div>
+        
+        <!-- Issues table card -->
+        <div class="card">
+          <!-- Table for issues display -->
+          <table class="data-table">
+            <!-- Table header row -->
+            <thead>
+              <!-- Table header cells -->
+              <tr>
+                <!-- Project column header -->
+                <th>Project</th>
+                <!-- Title column header -->
+                <th>Title</th>
+                <!-- Status column header -->
+                <th>Status</th>
+                <!-- Created Date column header -->
+                <th>Created</th>
+                <!-- Actions column header -->
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <!-- Table body for dynamic content -->
+            <tbody id="issuesTableBody">
+              <!-- Placeholder row showing loading state -->
+              <tr>
+                <!-- Colspan all columns -->
+                <td colspan="5" style="text-align: center; padding: 20px;">Loading issues...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  
+  <!-- Add User Modal -->
+  <div id="addUserModal" class="modal">
+    <!-- Modal content container -->
+    <div class="modal-content">
+      <!-- Modal close button -->
+      <span class="close-btn" onclick="closeModal('addUserModal')">&times;</span>
+      <!-- Modal title -->
+      <h2>Add New User</h2>
+      <!-- Error message container -->
+      <div id="addUserError" style="color: #d32f2f; margin-bottom: 10px;"></div>
+      <!-- Add user form -->
+      <form id="addUserForm">
+        <!-- User name field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Full Name *</label>
+          <!-- Text input -->
+          <input type="text" id="addUserName" required>
+        </div>
+        
+        <!-- Age field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Age (1-99)</label>
+          <!-- Number input with validation -->
+          <input type="number" id="addUserAge" min="1" max="99" placeholder="Enter age">
+        </div>
+        
+        <!-- Gender field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Gender</label>
+          <!-- Gender dropdown -->
+          <select id="addUserGender">
+            <!-- Default placeholder option -->
+            <option value="">-- Select Gender --</option>
+            <!-- Male option -->
+            <option value="male">Male</option>
+            <!-- Female option -->
+            <option value="female">Female</option>
+            <!-- Other option -->
+            <option value="other">Other</option>
+          </select>
+        </div>
+        
+        <!-- Employment ID field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>Employment ID *</label>
+          <!-- Text input -->
+          <input type="text" id="addUserEmploymentId" required>
+        </div>
+        
+        <!-- Role selection field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>Role *</label>
+          <!-- Role dropdown -->
+          <select id="addUserRole" required>
+            <!-- Default placeholder option -->
+            <option value="">Select Role</option>
+            <!-- Project Manager option -->
+            <option value="project_manager">Project Manager</option>
+            <!-- Site Engineer option -->
+            <option value="site_engineer">Site Engineer</option>
+            <!-- Supervisor option -->
+            <option value="supervisor">Supervisor</option>
+          </select>
+        </div>
+        
+        <!-- User ID field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>User ID *</label>
+          <!-- Text input -->
+          <input type="text" id="addUserUserId" required>
+        </div>
+        
+        <!-- Password field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>Password *</label>
+          <!-- Password input -->
+          <input type="password" id="addUserPassword" required>
+        </div>
+        
+        <!-- Form submission button -->
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 15px;">Create User</button>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Edit User Modal -->
+  <div id="editUserModal" class="modal">
+    <!-- Modal content container -->
+    <div class="modal-content">
+      <!-- Modal close button -->
+      <span class="close-btn" onclick="closeModal('editUserModal')">&times;</span>
+      <!-- Modal title -->
+      <h2 id="editUserModalTitle">Edit User</h2>
+      <!-- Error message container -->
+      <div id="editUserError" style="color: #d32f2f; margin-bottom: 10px;"></div>
+      <!-- Edit user form -->
+      <form id="editUserForm">
+        <!-- User name field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Full Name *</label>
+          <!-- Text input -->
+          <input type="text" id="editUserName" required>
+        </div>
+        
+        <!-- Age field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Age (1-99)</label>
+          <!-- Number input with validation -->
+          <input type="number" id="editUserAge" min="1" max="99" placeholder="Enter age">
+        </div>
+        
+        <!-- Gender field -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Gender</label>
+          <!-- Gender dropdown -->
+          <select id="editUserGender">
+            <!-- Default placeholder option -->
+            <option value="">-- Select Gender --</option>
+            <!-- Male option -->
+            <option value="male">Male</option>
+            <!-- Female option -->
+            <option value="female">Female</option>
+            <!-- Other option -->
+            <option value="other">Other</option>
+          </select>
+        </div>
+        
+        <!-- Employment ID field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>Employment ID *</label>
+          <!-- Text input -->
+          <input type="text" id="editUserEmploymentId" required>
+        </div>
+        
+        <!-- Role selection field -->
+        <div class="form-group">
+          <!-- Label with required indicator -->
+          <label>Role *</label>
+          <!-- Role dropdown -->
+          <select id="editUserRole" required>
+            <!-- Default placeholder option -->
+            <option value="">Select Role</option>
+            <!-- Project Manager option -->
+            <option value="project_manager">Project Manager</option>
+            <!-- Site Engineer option -->
+            <option value="site_engineer">Site Engineer</option>
+            <!-- Supervisor option -->
+            <option value="supervisor">Supervisor</option>
+          </select>
+        </div>
+        
+        <!-- User ID field (read-only for edit) -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>User ID</label>
+          <!-- Text input as read-only -->
+          <input type="text" id="editUserId" readonly style="background: #f5f5f5;">
+        </div>
+        
+        <!-- Password field (optional for edit) -->
+        <div class="form-group">
+          <!-- Label -->
+          <label>Password (leave blank to keep existing)</label>
+          <!-- Password input -->
+          <input type="password" id="editUserPassword" placeholder="Enter new password to change">
+        </div>
+        
+        <!-- Form submission button -->
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 15px;">Update User</button>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Loading overlay for async operations -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <!-- Loading spinner -->
+    <div class="spinner"></div>
+    <!-- Loading text -->
+    <p>Loading...</p>
+  </div>
+  
+  <!-- Link to superadmin JavaScript -->
+  <script src="../js/superadmin.js"></script>
+</body>
+</html>

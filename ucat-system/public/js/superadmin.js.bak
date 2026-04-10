@@ -1,0 +1,1110 @@
+// Superadmin Dashboard JS - Complete implementation with all features
+
+let currentUser = null;
+// Chart instance for budget visualization
+let budgetChart = null;
+// Array to store all users fetched from database
+let allUsers = [];
+// Array to store all projects fetched from database
+let allProjects = [];
+// Array to store all issues fetched from database
+let allIssues = [];
+// Object to store users grouped by role for dropdown filtering
+let usersByRole = {};
+// Variable to track current edit user ID
+let editingUserId = null;
+
+// Function to display toast notification to user
+function showToast(message, type = 'info') {
+  // Get or create toast container element
+  const container = document.getElementById('toastContainer') || createToastContainer();
+  // Create new toast div element
+  const toast = document.createElement('div');
+  // Add toast and type class for styling
+  toast.className = `toast ${type}`;
+  // Set toast message text
+  toast.textContent = message;
+  // Append toast to container
+  container.appendChild(toast);
+  
+  // Automatically hide toast after 3 seconds
+  setTimeout(() => {
+    // Start slide out animation
+    toast.style.animation = 'slideOutRight 0.3s ease-out forwards';
+    // Remove toast element after animation completes
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// Function to create toast container element
+function createToastContainer() {
+  // Create new div for toast container
+  const container = document.createElement('div');
+  // Set container ID
+  container.id = 'toastContainer';
+  // Add CSS class for positioning
+  container.className = 'toast-container';
+  // Append container to page body
+  document.body.appendChild(container);
+  // Return container reference
+  return container;
+}
+
+// Function to show/hide loading overlay
+function showLoading(show = true) {
+  // Get loading overlay element from DOM
+  const overlay = document.getElementById('loadingOverlay');
+  // Show or hide overlay based on parameter
+  if (overlay) {
+    // Toggle 'show' class to display/hide overlay
+    overlay.classList.toggle('show', show);
+  }
+}
+
+// Function to get cookie value by name
+function getCookie(name) {
+  // Create search string for cookie
+  const nameEQ = name + '=';
+  // Split all cookies by semicolon
+  const cookies = document.cookie.split(';');
+  // Loop through each cookie
+  for (let i = 0; i < cookies.length; i++) {
+    // Trim whitespace from cookie
+    let cookie = cookies[i].trim();
+    // Check if cookie starts with our search string
+    if (cookie.indexOf(nameEQ) === 0) {
+      // Return cookie value without the name part
+      return cookie.substring(nameEQ.length, cookie.length);
+    }
+  }
+  // Return null if cookie not found
+  return null;
+}
+
+// Function to decode JWT token from localStorage
+function decodeJWT(token) {
+  // Split token into three parts (header.payload.signature)
+  const base64Url = token.split('.')[1];
+  // Replace URL-safe characters with standard base64 characters
+  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+  // Decode base64 and convert to UTF-8 string
+  const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
+    // Convert each character to percent-encoded format
+    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+  }).join(''));
+  // Parse JSON string to object and return
+  return JSON.parse(jsonPayload);
+}
+
+// Function to logout current user
+async function logoutUser() {
+  // Show confirmation dialog
+  if (!confirm('Are you sure you want to logout?')) return;
+  try {
+    // Send logout request to backend
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } finally {
+    // Clear token from localStorage
+    localStorage.removeItem('auth_token');
+    // Redirect to login page
+    window.location.href = '/';
+  }
+}
+
+// Function to format date to readable string
+function formatDate(dateStr) {
+  // Return empty string if no date provided
+  if (!dateStr) return '';
+  // Create date object from string
+  const date = new Date(dateStr);
+  // Format date using Indian locale (DD MMM YYYY HH:MM format)
+  return new Intl.DateTimeFormat('en-IN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Kolkata'
+  }).format(date);
+}
+
+// Function to open modal dialog by ID
+function openModal(modalId) {
+  // Get modal element from DOM
+  const modal = document.getElementById(modalId);
+  // Show modal by adding 'show' class
+  if (modal) {
+    // Add show class to display modal
+    modal.classList.add('show');
+  }
+}
+
+// Function to close modal dialog by ID
+function closeModal(modalId) {
+  // Get modal element from DOM
+  const modal = document.getElementById(modalId);
+  // Hide modal by removing 'show' class
+  if (modal) {
+    // Remove show class to hide modal
+    modal.classList.remove('show');
+  }
+}
+
+// Function to navigate to different page sections
+function navigateTo(sectionId) {
+  // Hide all page sections
+  document.querySelectorAll('.page-section').forEach(section => {
+    // Add hidden class to all sections
+    section.classList.add('hidden');
+  });
+  
+  // Show selected section
+  const section = document.getElementById(sectionId);
+  // Show only the selected section
+  if (section) {
+    // Remove hidden class from target section
+    section.classList.remove('hidden');
+  }
+  
+  // Update navigation link styles
+  document.querySelectorAll('.nav-link').forEach(link => {
+    // Remove active class from all nav links
+    link.classList.remove('active');
+  });
+  // Add active class to clicked link
+  event.target.classList.add('active');
+}
+
+// Function to load KPI statistics from backend
+async function loadStats() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch statistics from API
+    const response = await fetch('/api/superadmin/stats');
+    // Parse response JSON
+    const stats = await response.json();
+    
+    // Update KPI card for total projects
+    document.getElementById('totalProjects').textContent = stats.totalProjects;
+    // Update KPI card for active projects
+    document.getElementById('activeProjects').textContent = stats.activeProjects;
+    // Update KPI card for total users
+    document.getElementById('totalUsers').textContent = stats.totalUsers;
+    // Update KPI card for open issues
+    document.getElementById('openIssues').textContent = stats.openIssues;
+    // Update KPI card for workers on site
+    document.getElementById('workersOnSite').textContent = stats.workersOnSite;
+    // Update KPI card for uploaded documents
+    document.getElementById('documentsUploaded').textContent = stats.documentsUploaded;
+    
+    // Update gender breakdown bar chart if stats include breakdown
+    if (stats.workerGenderBreakdown) {
+      // Get container for gender stats
+      const container = document.getElementById('genderBreakdownStats');
+      // Build HTML for gender breakdown display
+      let html = '<div style="display: flex; gap: 20px; margin-top: 15px;">';
+      // Add male workers count
+      html += `<div><strong>Male:</strong> ${stats.workerGenderBreakdown.male || 0}</div>`;
+      // Add female workers count
+      html += `<div><strong>Female:</strong> ${stats.workerGenderBreakdown.female || 0}</div>`;
+      // Add other gender workers count
+      html += `<div><strong>Other:</strong> ${stats.workerGenderBreakdown.other || 0}</div>`;
+      // Close HTML container
+      html += '</div>';
+      // Set gender breakdown HTML in container
+      if (container) container.innerHTML = html;
+    }
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading stats:', error);
+    // Show error toast to user
+    showToast('Failed to load statistics', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to load recent activity feed
+async function loadActivity() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch activity from API
+    const response = await fetch('/api/superadmin/activity');
+    // Parse response JSON
+    const activity = await response.json();
+    
+    // Get activity container element
+    const container = document.getElementById('activityFeed');
+    // Build HTML for activity list
+    let html = '';
+    // Loop through each activity item
+    activity.forEach(item => {
+      // Create HTML for single activity row
+      html += `
+        <div style="padding: 12px; border-bottom: 1px solid #eee;">
+          <div style="font-size: 13px; color: #0F6E56; font-weight: 600;">${item.type.replace(/_/g, ' ').toUpperCase()}</div>
+          <div style="font-size: 14px; margin: 5px 0;">${item.description}</div>
+          <div style="font-size: 12px; color: #999;">${formatDate(item.created_at)}</div>
+        </div>
+      `;
+    });
+    // Set activity HTML in container
+    container.innerHTML = html || '<div style="padding: 20px; text-align: center; color: #999;">No recent activity</div>';
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading activity:', error);
+    // Show error toast to user
+    showToast('Failed to load activity', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to load and display budget chart
+async function loadBudgetChart() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch budget data from API
+    const response = await fetch('/api/budget');
+    // Parse response JSON
+    const budgetData = await response.json();
+    
+    // Group budget by date for last 30 days
+    const dateMap = {};
+    // Get current date
+    const today = new Date();
+    // Initialize 30 days of data
+    for (let i = 29; i >= 0; i--) {
+      // Create date 30 days ago
+      const date = new Date(today);
+      // Subtract i days
+      date.setDate(date.getDate() - i);
+      // Format date as YYYY-MM-DD
+      const dateStr = date.toISOString().split('T')[0];
+      // Initialize with 0 budget
+      dateMap[dateStr] = 0;
+    }
+    
+    // Sum budget amounts by date
+    budgetData.forEach(record => {
+      // Extract date from record
+      const dateStr = record.date.split('T')[0];
+      // Add amount to date total
+      if (dateMap[dateStr] !== undefined) {
+        dateMap[dateStr] += parseFloat(record.amount);
+      }
+    });
+    
+    // Extract sorted dates
+    const dates = Object.keys(dateMap).sort();
+    // Extract amounts in same order
+    const amounts = dates.map(date => dateMap[date]);
+    
+    // Get chart canvas element
+    const ctx = document.getElementById('budgetChart');
+    // Destroy existing chart if present
+    if (budgetChart) {
+      budgetChart.destroy();
+    }
+    
+    // Create new Chart.js instance
+    budgetChart = new Chart(ctx, {
+      // Chart type: line graph
+      type: 'line',
+      // Chart data configuration
+      data: {
+        // X-axis labels: dates
+        labels: dates.map(d => new Date(d).toLocaleDateString('en-IN')),
+        // Dataset configuration
+        datasets: [{
+          // Label for legend
+          label: 'Daily Budget Spend',
+          // Y-axis data: amounts
+          data: amounts,
+          // Line color
+          borderColor: '#0F6E56',
+          // Background color under line
+          backgroundColor: 'rgba(15, 110, 86, 0.1)',
+          // Line width in pixels
+          borderWidth: 2,
+          // Tension for curved lines
+          tension: 0.4
+        }]
+      },
+      // Chart options configuration
+      options: {
+        // Responsive chart scaling
+        responsive: true,
+        // Keep aspect ratio
+        maintainAspectRatio: true,
+        // Y-axis configuration
+        scales: {
+          y: {
+            // Start Y-axis at 0
+            beginAtZero: true,
+            // Y-axis title
+            title: {
+              display: true,
+              text: 'Amount (₹)'
+            }
+          }
+        },
+        // Plugin options
+        plugins: {
+          // Legend configuration
+          legend: {
+            display: true,
+            position: 'top'
+          }
+        }
+      }
+    });
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading budget chart:', error);
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to load users and display in table
+async function loadUsers() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch all users from API
+    const response = await fetch('/api/superadmin/users');
+    // Parse response JSON
+    allUsers = await response.json();
+    
+    // Display users in table
+    displayUsersTable();
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading users:', error);
+    // Show error toast to user
+    showToast('Failed to load users', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to display users in HTML table
+function displayUsersTable() {
+  // Get table body element
+  const tbody = document.getElementById('usersTableBody');
+  // Build HTML for each user row
+  let html = '';
+  // Loop through all users
+  allUsers.forEach(user => {
+    // Create table row HTML with all user data
+    html += `
+      <tr>
+        <td>${user.name}</td>
+        <td>${user.age || '-'}</td>
+        <td>${user.gender || '-'}</td>
+        <td>${user.employment_id}</td>
+        <td><span class="badge badge-primary">${user.role.replace(/_/g, ' ')}</span></td>
+        <td>${user.user_id}</td>
+        <td>${formatDate(user.created_at)}</td>
+        <td>
+          <button class="btn btn-sm" style="padding: 4px 8px; font-size: 12px;" onclick="openEditUserModal(${user.id}, '${user.name}', ${user.age || 'null'}, '${user.gender || ''}', '${user.employment_id}', '${user.role}', '${user.user_id}')">Edit</button>
+          <button class="btn btn-sm btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deleteUser(${user.id})">Delete</button>
+        </td>
+      </tr>
+    `;
+  });
+  // Set table body HTML
+  tbody.innerHTML = html || '<tr><td colspan="8">No users found</td></tr>';
+}
+
+// Function to load and populate user selects for project creation
+async function loadUsersForDropdowns() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch project managers
+    const pmResponse = await fetch('/api/superadmin/users?role=project_manager');
+    usersByRole.pm = await pmResponse.json();
+    
+    // Fetch site engineers
+    const seResponse = await fetch('/api/superadmin/users?role=site_engineer');
+    usersByRole.se = await seResponse.json();
+    
+    // Fetch supervisors
+    const supResponse = await fetch('/api/superadmin/users?role=supervisor');
+    usersByRole.supervisor = await supResponse.json();
+    
+    // Populate dropdowns in create project form
+    populateProjectUserSelects();
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading users for dropdowns:', error);
+    // Show error toast to user
+    showToast('Failed to load users', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to populate user selection dropdowns in project form
+function populateProjectUserSelects() {
+  // Clear and populate project manager select
+  const pmSelect = document.getElementById('projectManagerSelect');
+  // Reset select HTML
+  pmSelect.innerHTML = '<option value="">Select Project Manager(s)</option>';
+  // Loop through project managers
+  usersByRole.pm.forEach(user => {
+    // Create option element for each PM
+    const option = document.createElement('option');
+    // Set option value to user ID
+    option.value = user.id;
+    // Set option text to user name and ID
+    option.textContent = `${user.name} (${user.user_id})`;
+    // Append option to select
+    pmSelect.appendChild(option);
+  });
+  
+  // Clear and populate site engineer select
+  const seSelect = document.getElementById('siteEngineerSelect');
+  // Reset select HTML
+  seSelect.innerHTML = '<option value="">Select Site Engineer(s)</option>';
+  // Loop through site engineers
+  usersByRole.se.forEach(user => {
+    // Create option element for each SE
+    const option = document.createElement('option');
+    // Set option value to user ID
+    option.value = user.id;
+    // Set option text to user name and ID
+    option.textContent = `${user.name} (${user.user_id})`;
+    // Append option to select
+    seSelect.appendChild(option);
+  });
+  
+  // Clear and populate supervisor select
+  const supSelect = document.getElementById('supervisorSelect');
+  // Reset select HTML
+  supSelect.innerHTML = '<option value="">Select Supervisor(s)</option>';
+  // Loop through supervisors
+  usersByRole.supervisor.forEach(user => {
+    // Create option element for each supervisor
+    const option = document.createElement('option');
+    // Set option value to user ID
+    option.value = user.id;
+    // Set option text to user name and ID
+    option.textContent = `${user.name} (${user.user_id})`;
+    // Append option to select
+    supSelect.appendChild(option);
+  });
+}
+
+// Function to load projects
+async function loadProjects() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch all projects from API
+    const response = await fetch('/api/projects');
+    // Parse response JSON
+    allProjects = await response.json();
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading projects:', error);
+    // Show error toast to user
+    showToast('Failed to load projects', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to filter users table by name and role
+function filterUsers() {
+  // Get filter input values
+  const nameFilter = document.getElementById('userNameFilter').value.toLowerCase();
+  const roleFilter = document.getElementById('userRoleFilter').value.toLowerCase();
+  
+  // Get all table rows
+  const rows = document.querySelectorAll('#usersTableBody tr');
+  // Loop through each row
+  rows.forEach(row => {
+    // Get cells from row
+    const cells = row.querySelectorAll('td');
+    // Get user name from first cell
+    const name = cells[0].textContent.toLowerCase();
+    // Get user role from fifth cell
+    const role = cells[4].textContent.toLowerCase();
+    
+    // Check if row matches filters
+    const nameMatch = name.includes(nameFilter);
+    const roleMatch = !roleFilter || role.includes(roleFilter);
+    
+    // Show or hide row based on filter match
+    row.style.display = (nameMatch && roleMatch) ? '' : 'none';
+  });
+}
+
+// Function to open add user modal
+function openAddUserModal() {
+  // Clear form fields
+  document.getElementById('addUserForm').reset();
+  // Clear any existing error messages
+  document.getElementById('addUserError').textContent = '';
+  // Open the add user modal
+  openModal('addUserModal');
+}
+
+// Function to open edit user modal with pre-filled data
+function openEditUserModal(userId, name, age, gender, employmentId, role, userId2) {
+  // Store current edit user ID
+  editingUserId = userId;
+  // Set modal title to Edit mode
+  document.getElementById('editUserModalTitle').textContent = 'Edit User';
+  // Pre-fill name field
+  document.getElementById('editUserName').value = name;
+  // Pre-fill age field
+  document.getElementById('editUserAge').value = age || '';
+  // Pre-fill gender dropdown
+  document.getElementById('editUserGender').value = gender || '';
+  // Pre-fill employment ID field
+  document.getElementById('editUserEmploymentId').value = employmentId;
+  // Pre-fill role dropdown
+  document.getElementById('editUserRole').value = role;
+  // Pre-fill user ID field
+  document.getElementById('editUserId').value = userId2;
+  // Clear password field (optional for edit)
+  document.getElementById('editUserPassword').value = '';
+  // Clear any existing error messages
+  document.getElementById('editUserError').textContent = '';
+  // Open the edit user modal
+  openModal('editUserModal');
+}
+
+// Function to handle add user form submission
+async function handleAddUser(e) {
+  // Prevent default form submission
+  e.preventDefault();
+  // Clear previous error messages
+  document.getElementById('addUserError').textContent = '';
+  
+  // Get form field values
+  const name = document.getElementById('addUserName').value.trim();
+  const age = document.getElementById('addUserAge').value.trim();
+  const gender = document.getElementById('addUserGender').value;
+  const employmentId = document.getElementById('addUserEmploymentId').value.trim();
+  const role = document.getElementById('addUserRole').value;
+  const userId = document.getElementById('addUserUserId').value.trim();
+  const password = document.getElementById('addUserPassword').value.trim();
+  
+  // Validate required fields
+  if (!name || !employmentId || !role || !userId || !password) {
+    // Show error message
+    document.getElementById('addUserError').textContent = 'All fields are required';
+    // Stop form processing
+    return;
+  }
+  
+  // Validate age if provided
+  if (age) {
+    // Parse age as integer
+    const ageNum = parseInt(age);
+    // Check if age is valid (1-99)
+    if (!Number.isInteger(ageNum) || ageNum < 1 || ageNum > 99) {
+      // Show error message
+      document.getElementById('addUserError').textContent = 'Age must be between 1 and 99';
+      // Stop form processing
+      return;
+    }
+  }
+  
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Send add user request to API
+    const response = await fetch('/api/superadmin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        age: age ? parseInt(age) : null,
+        gender: gender || null,
+        employment_id: employmentId,
+        role,
+        user_id: userId,
+        password
+      })
+    });
+    
+    // Check if request was successful
+    if (!response.ok) {
+      // Parse error response
+      const error = await response.json();
+      // Show error message
+      document.getElementById('addUserError').textContent = error.error;
+      // Stop processing
+      return;
+    }
+    
+    // Show success toast
+    showToast('User created successfully', 'success');
+    // Close modal
+    closeModal('addUserModal');
+    // Reload users table
+    loadUsers();
+    // Reload dropdowns
+    loadUsersForDropdowns();
+  } catch (error) {
+    // Log error to console
+    console.error('Error creating user:', error);
+    // Show error message
+    document.getElementById('addUserError').textContent = 'Failed to create user';
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to handle edit user form submission
+async function handleEditUser(e) {
+  // Prevent default form submission
+  e.preventDefault();
+  // Clear previous error messages
+  document.getElementById('editUserError').textContent = '';
+  
+  // Get form field values
+  const name = document.getElementById('editUserName').value.trim();
+  const age = document.getElementById('editUserAge').value.trim();
+  const gender = document.getElementById('editUserGender').value;
+  const employmentId = document.getElementById('editUserEmploymentId').value.trim();
+  const role = document.getElementById('editUserRole').value;
+  const password = document.getElementById('editUserPassword').value.trim();
+  
+  // Validate required fields
+  if (!name || !employmentId || !role) {
+    // Show error message
+    document.getElementById('editUserError').textContent = 'Name, Employment ID, and Role are required';
+    // Stop form processing
+    return;
+  }
+  
+  // Validate age if provided
+  if (age) {
+    // Parse age as integer
+    const ageNum = parseInt(age);
+    // Check if age is valid (1-99)
+    if (!Number.isInteger(ageNum) || ageNum < 1 || ageNum > 99) {
+      // Show error message
+      document.getElementById('editUserError').textContent = 'Age must be between 1 and 99';
+      // Stop form processing
+      return;
+    }
+  }
+  
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Send update user request to API
+    const response = await fetch(`/api/superadmin/users/${editingUserId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        age: age ? parseInt(age) : null,
+        gender: gender || null,
+        employment_id: employmentId,
+        role,
+        password: password || undefined
+      })
+    });
+    
+    // Check if request was successful
+    if (!response.ok) {
+      // Parse error response
+      const error = await response.json();
+      // Show error message
+      document.getElementById('editUserError').textContent = error.error;
+      // Stop processing
+      return;
+    }
+    
+    // Show success toast
+    showToast('User updated successfully', 'success');
+    // Close modal
+    closeModal('editUserModal');
+    // Reload users table
+    loadUsers();
+    // Reload dropdowns
+    loadUsersForDropdowns();
+  } catch (error) {
+    // Log error to console
+    console.error('Error updating user:', error);
+    // Show error message
+    document.getElementById('editUserError').textContent = 'Failed to update user';
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to delete user
+async function deleteUser(userId) {
+  // Show confirmation dialog
+  if (!confirm('Are you sure you want to delete this user?')) return;
+  
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Send delete user request to API
+    const response = await fetch(`/api/superadmin/users/${userId}`, {
+      method: 'DELETE'
+    });
+    
+    // Check if request was successful
+    if (!response.ok) {
+      // Parse error response
+      const error = await response.json();
+      // Show error toast
+      showToast(error.error, 'error');
+      // Stop processing
+      return;
+    }
+    
+    // Show success toast
+    showToast('User deleted successfully', 'success');
+    // Reload users table
+    loadUsers();
+    // Reload dropdowns
+    loadUsersForDropdowns();
+  } catch (error) {
+    // Log error to console
+    console.error('Error deleting user:', error);
+    // Show error toast
+    showToast('Failed to delete user', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to load issues
+async function loadIssues() {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Fetch all issues from API
+    const response = await fetch('/api/troubleshoot');
+    // Parse response JSON
+    allIssues = await response.json();
+    
+    // Display issues in table
+    displayIssuesTable();
+  } catch (error) {
+    // Log error to console
+    console.error('Error loading issues:', error);
+    // Show error toast to user
+    showToast('Failed to load issues', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to display issues in HTML table
+function displayIssuesTable() {
+  // Get table body element
+  const tbody = document.getElementById('issuesTableBody');
+  // Build HTML for each issue row
+  let html = '';
+  // Loop through all issues
+  allIssues.forEach(issue => {
+    // Find project name for this issue
+    const project = allProjects.find(p => p.id === issue.project_id);
+    // Create table row HTML with issue data
+    html += `
+      <tr>
+        <td>${project?.name || 'Unknown'}</td>
+        <td>${issue.title}</td>
+        <td><span class="badge badge-${issue.status === 'open' ? 'danger' : issue.status === 'escalated' ? 'warning' : 'success'}">${issue.status}</span></td>
+        <td>${formatDate(issue.created_at)}</td>
+        <td>
+          ${issue.status !== 'resolved' ? `<button class="btn btn-sm btn-success" style="padding: 4px 8px; font-size: 12px;" onclick="resolveIssue(${issue.id})">Resolve</button>` : '-'}
+        </td>
+      </tr>
+    `;
+  });
+  // Set table body HTML
+  tbody.innerHTML = html || '<tr><td colspan="5">No issues found</td></tr>';
+}
+
+// Function to resolve an issue
+async function resolveIssue(issueId) {
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Send resolve issue request to API
+    const response = await fetch(`/api/troubleshoot/${issueId}/resolve`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    // Check if request was successful
+    if (!response.ok) {
+      // Parse error response
+      const error = await response.json();
+      // Show error toast
+      showToast(error.error, 'error');
+      // Stop processing
+      return;
+    }
+    
+    // Show success toast
+    showToast('Issue resolved', 'success');
+    // Reload issues table
+    loadIssues();
+  } catch (error) {
+    // Log error to console
+    console.error('Error resolving issue:', error);
+    // Show error toast
+    showToast('Failed to resolve issue', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Function to export users to CSV
+function exportUsersCSV() {
+  // Build CSV header row
+  let csv = 'Name,Age,Gender,Employment ID,Role,User ID,Created Date\n';
+  // Loop through all users
+  allUsers.forEach(user => {
+    // Add user data as CSV row
+    csv += `"${user.name}","${user.age || ''}","${user.gender || ''}","${user.employment_id}","${user.role}","${user.user_id}","${formatDate(user.created_at)}"\n`;
+  });
+  
+  // Create blob from CSV string
+  const blob = new Blob([csv], { type: 'text/csv' });
+  // Create download link
+  const url = window.URL.createObjectURL(blob);
+  // Create temporary anchor element
+  const a = document.createElement('a');
+  // Set download link
+  a.href = url;
+  // Set download filename
+  a.download = `users-${new Date().toISOString().split('T')[0]}.csv`;
+  // Trigger download
+  a.click();
+  // Clean up URL object
+  window.URL.revokeObjectURL(url);
+  // Show success message
+  showToast('Users exported successfully', 'success');
+}
+
+// Function to handle create project form submission
+async function handleCreateProject(e) {
+  // Prevent default form submission
+  e.preventDefault();
+  
+  // Get form field values
+  const projectName = document.getElementById('projectName').value.trim();
+  const location = document.getElementById('projectLocation').value.trim();
+  const city = document.getElementById('projectCity').value.trim();
+  const contractorName = document.getElementById('contractorName').value.trim();
+  
+  // Get selected project managers
+  const pmSelect = document.getElementById('projectManagerSelect');
+  const selectedPMs = Array.from(pmSelect.selectedOptions).map(opt => parseInt(opt.value));
+  
+  // Get selected site engineers
+  const seSelect = document.getElementById('siteEngineerSelect');
+  const selectedSEs = Array.from(seSelect.selectedOptions).map(opt => parseInt(opt.value));
+  
+  // Get selected supervisors
+  const supSelect = document.getElementById('supervisorSelect');
+  const selectedSups = Array.from(supSelect.selectedOptions).map(opt => parseInt(opt.value));
+  
+  // Validate required fields
+  if (!projectName || !location || !city) {
+    // Show error toast
+    showToast('Project name, location, and city are required', 'error');
+    // Stop form processing
+    return;
+  }
+  
+  // Validate at least one user is selected for each role
+  if (selectedPMs.length === 0 || selectedSEs.length === 0 || selectedSups.length === 0) {
+    // Show error toast
+    showToast('Please select at least one person for each role', 'error');
+    // Stop form processing
+    return;
+  }
+  
+  // Indicate loading state
+  showLoading(true);
+  try {
+    // Send create project request to API
+    const response = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: projectName,
+        location,
+        city,
+        contractor_name: contractorName,
+        project_managers: selectedPMs,
+        site_engineers: selectedSEs,
+        supervisors: selectedSups
+      })
+    });
+    
+    // Check if request was successful
+    if (!response.ok) {
+      // Parse error response
+      const error = await response.json();
+      // Show error toast
+      showToast(error.error, 'error');
+      // Stop processing
+      return;
+    }
+    
+    // Show success toast
+    showToast('Project created successfully', 'success');
+    // Reset form fields
+    document.getElementById('createProjectForm').reset();
+    // Reload projects list
+    loadProjects();
+  } catch (error) {
+    // Log error to console
+    console.error('Error creating project:', error);
+    // Show error toast
+    showToast('Failed to create project', 'error');
+  } finally {
+    // Hide loading state
+    showLoading(false);
+  }
+}
+
+// Initialize application on page load
+document.addEventListener('DOMContentLoaded', () => {
+  // Get auth token from localStorage
+  const token = localStorage.getItem('auth_token');
+  // Redirect to login if no token
+  if (!token) {
+    // Redirect to login page
+    window.location.href = '/';
+    // Stop execution
+    return;
+  }
+  
+  try {
+    // Decode JWT token
+    currentUser = decodeJWT(token);
+    // Display user name in page
+    document.getElementById('userName').textContent = currentUser.name;
+  } catch (error) {
+    // Log error to console
+    console.error('Token error:', error);
+    // Clear token from storage
+    localStorage.removeItem('auth_token');
+    // Redirect to login page
+    window.location.href = '/';
+  }
+  
+  // Setup navigation link click handlers
+  document.querySelectorAll('.nav-link').forEach(link => {
+    // Add click event listener to each nav link
+    link.addEventListener('click', (e) => {
+      // Prevent default link behavior
+      e.preventDefault();
+      // Get target section ID from href attribute
+      const targetId = link.getAttribute('href').substring(1);
+      // Remove active class from all nav links
+      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+      // Add active class to clicked link
+      link.classList.add('active');
+      // Navigate to target section
+      navigateTo(targetId);
+    });
+  });
+  
+  // Setup form submit handlers
+  document.getElementById('createProjectForm').addEventListener('submit', handleCreateProject);
+  document.getElementById('addUserForm').addEventListener('submit', handleAddUser);
+  document.getElementById('editUserForm').addEventListener('submit', handleEditUser);
+  
+  // Setup filter input handlers
+  document.getElementById('userNameFilter').addEventListener('keyup', filterUsers);
+  document.getElementById('userRoleFilter').addEventListener('change', filterUsers);
+  
+  // Setup age input validation for add user form
+  const addUserAgeInput = document.getElementById('addUserAge');
+  // Add input event listener for age field
+  addUserAgeInput.addEventListener('input', () => {
+    // Remove any non-numeric characters
+    addUserAgeInput.value = addUserAgeInput.value.replace(/[^0-9]/g, '');
+    // Cap age at 99
+    if (parseInt(addUserAgeInput.value) > 99) addUserAgeInput.value = 99;
+    // Floor age at 1 if input exists
+    if (parseInt(addUserAgeInput.value) < 1 && addUserAgeInput.value !== '') addUserAgeInput.value = 1;
+  });
+  
+  // Setup age input validation for edit user form
+  const editUserAgeInput = document.getElementById('editUserAge');
+  // Add input event listener for age field
+  editUserAgeInput.addEventListener('input', () => {
+    // Remove any non-numeric characters
+    editUserAgeInput.value = editUserAgeInput.value.replace(/[^0-9]/g, '');
+    // Cap age at 99
+    if (parseInt(editUserAgeInput.value) > 99) editUserAgeInput.value = 99;
+    // Floor age at 1 if input exists
+    if (parseInt(editUserAgeInput.value) < 1 && editUserAgeInput.value !== '') editUserAgeInput.value = 1;
+  });
+  
+  // Load initial data
+  loadStats();
+  loadActivity();
+  loadBudgetChart();
+  loadUsers();
+  loadProjects();
+  loadIssues();
+  loadUsersForDropdowns();
+  
+  // Refresh data every 30 seconds
+  setInterval(() => {
+    // Check if overview section is visible
+    if (document.getElementById('overview').classList.contains('hidden') === false) {
+      // Reload stats
+      loadStats();
+      // Reload activity
+      loadActivity();
+      // Reload budget chart
+      loadBudgetChart();
+    }
+  }, 30000);
+  
+  // Add CSS animations
+  const style = document.createElement('style');
+  // Define slide out animation
+  style.textContent = `
+    @keyframes slideOutRight {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+    }
+  `;
+  // Append styles to document head
+  document.head.appendChild(style);
+});

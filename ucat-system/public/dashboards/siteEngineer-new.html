@@ -1,0 +1,207 @@
+<!-- DOCTYPE declaration for HTML5 standards compliance -->
+<!DOCTYPE html>
+<!-- Root HTML element with English language specification -->
+<html lang="en">
+  <!-- Head section containing metadata and resource links -->
+  <head>
+    <!-- UTF-8 character encoding for international character support -->
+    <meta charset="UTF-8" />
+    <!-- Viewport meta tag for responsive design on mobile and desktop -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Page title displayed in browser tab -->
+    <title>UCAT - Site Engineer Dashboard</title>
+    <!-- Link to main CSS stylesheet for base styles -->
+    <link rel="stylesheet" href="../css/main.css" />
+    <!-- Link to dashboard-specific CSS stylesheet -->
+    <link rel="stylesheet" href="../css/dashboard.css" />
+    <!-- Link to Font Awesome icon library from CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  </head>
+  <!-- Body section containing all page content and DOM elements -->
+  <body>
+    <!-- Sidebar navigation container on left side of page -->
+    <aside class="sidebar">
+      <!-- Logo and branding section at top of sidebar -->
+      <div class="sidebar-header">
+        <!-- UCAT system logo image -->
+        <img src="../assets/logo.png" alt="UCAT Logo" class="logo" />
+        <!-- System name text "UCAT" -->
+        <span class="system-name">UCAT</span>
+      </div>
+      <!-- Navigation menu with links to different dashboard sections -->
+      <nav class="sidebar-nav">
+        <!-- Overview navigation link with icon -->
+        <a href="#overview" class="nav-link active" data-section="overview">
+          <!-- Overview section icon -->
+          <i class="fas fa-chart-line"></i>
+          <!-- Overview label text -->
+          <span>Overview</span>
+        </a>
+        <!-- My Projects navigation link with icon -->
+        <a href="#myProjects" class="nav-link" data-section="myProjects">
+          <!-- My Projects section icon -->
+          <i class="fas fa-briefcase"></i>
+          <!-- My Projects label text -->
+          <span>My Projects</span>
+        </a>
+        <!-- Worker Management navigation link with icon -->
+        <a href="#workerManagement" class="nav-link" data-section="workerManagement">
+          <!-- Worker Management section icon -->
+          <i class="fas fa-users"></i>
+          <!-- Worker Management label text -->
+          <span>Worker Management</span>
+        </a>
+      </nav>
+      <!-- Logout button at bottom of sidebar -->
+      <button class="logout-btn" onclick="logoutUser()">
+        <!-- Logout icon -->
+        <i class="fas fa-sign-out-alt"></i>
+        <!-- Logout label text -->
+        <span>Logout</span>
+      </button>
+    </aside>
+    <!-- Main content area container -->
+    <main class="main-content">
+      <!-- Overview section (displayed by default) -->
+      <section id="overview" class="content-section active">
+        <!-- Section heading for Overview -->
+        <h2>Overview</h2>
+        <!-- Project selector dropdown for filtering workers by project -->
+        <div class="form-group">
+          <!-- Label for project selection -->
+          <label for="projectSelect">Select Project:</label>
+          <!-- Dropdown to select which project to view workers for -->
+          <select id="projectSelect" onchange="loadWorkers(this.value)">
+            <!-- Default empty option for project select -->
+            <option value="">Choose a project...</option>
+            <!-- Project options populated by JavaScript -->
+          </select>
+        </div>
+      </section>
+      <!-- My Projects section (hidden by default) -->
+      <section id="myProjects" class="content-section" style="display: none;">
+        <!-- Section heading for My Projects -->
+        <h2>My Projects</h2>
+        <!-- Container for projects list (populated by JavaScript) -->
+        <div id="projectsList" class="projects-list">
+          <!-- Projects will be populated here by JavaScript -->
+        </div>
+      </section>
+      <!-- Worker Management section (hidden by default) -->
+      <section id="workerManagement" class="content-section" style="display: none;">
+        <!-- Section heading for Worker Management -->
+        <h2>Worker Management</h2>
+        <!-- Top bar with Add Worker button -->
+        <div class="worker-management-top-bar">
+          <!-- Add Worker button that opens modal -->
+          <button id="addWorkerBtn" class="btn btn-success">+ Add Worker</button>
+        </div>
+        <!-- Workers table container -->
+        <table class="workers-table">
+          <!-- Table header row -->
+          <thead>
+            <!-- Number column header -->
+            <th>No.</th>
+            <!-- Full Name column header -->
+            <th>Full Name</th>
+            <!-- Age column header -->
+            <th>Age</th>
+            <!-- Gender column header -->
+            <th>Gender</th>
+            <!-- Assigned Supervisor column header -->
+            <th>Assigned Supervisor</th>
+            <!-- Added On column header -->
+            <th>Added On</th>
+            <!-- Actions column header -->
+            <th>Actions</th>
+          </thead>
+          <!-- Table body (populated by JavaScript) -->
+          <tbody id="workersTable">
+            <!-- Worker rows populated by JavaScript -->
+          </tbody>
+        </table>
+        <!-- Empty state message -->
+        <div id="emptyWorkerState" class="empty-state" style="display: none;">
+          <!-- Message when no workers exist -->
+          <p>No workers added yet. Click + Add Worker to begin.</p>
+        </div>
+      </section>
+    </main>
+    <!-- Add Worker Modal (hidden by default) -->
+    <div id="addWorkerModal" class="modal" style="display: none;">
+      <!-- Modal dialog container for adding new worker -->
+      <div class="modal-dialog">
+        <!-- Modal header with title and close button -->
+        <div class="modal-header">
+          <!-- Modal title text -->
+          <h3>Add Worker</h3>
+          <!-- Close button for modal -->
+          <button type="button" class="close-btn" onclick="document.getElementById('addWorkerModal').style.display='none';">
+            <!-- Close icon -->
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <!-- Modal body with form -->
+        <div class="modal-body">
+          <!-- Form for adding new worker -->
+          <form id="addWorkerForm" class="form-container">
+            <!-- Worker Full Name label and input -->
+            <div class="form-group">
+              <!-- Label for worker name input -->
+              <label for="workerName">Full Name</label>
+              <!-- Text input for worker name with required validation and minimum length -->
+              <input type="text" id="workerName" name="name" required minlength="2" placeholder="Enter worker's full name" />
+            </div>
+            <!-- Worker Age label and input -->
+            <div class="form-group">
+              <!-- Label for worker age input -->
+              <label for="workerAge">Age</label>
+              <!-- Number input for worker age (1-99 range) with required validation -->
+              <input type="number" id="workerAge" name="age" min="1" max="99" required placeholder="Enter age" />
+            </div>
+            <!-- Worker Gender label and select -->
+            <div class="form-group">
+              <!-- Label for gender select -->
+              <label for="workerGender">Gender</label>
+              <!-- Select dropdown for gender with required validation -->
+              <select id="workerGender" name="gender" required>
+                <!-- Default empty option for gender -->
+                <option value="">Select Gender</option>
+                <!-- Male gender option -->
+                <option value="male">Male</option>
+                <!-- Female gender option -->
+                <option value="female">Female</option>
+                <!-- Other gender option -->
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <!-- Assign Supervisor label and select -->
+            <div class="form-group">
+              <!-- Label for supervisor select -->
+              <label for="workerSupervisor">Assign Supervisor</label>
+              <!-- Select dropdown for supervisor assignment with required validation -->
+              <select id="workerSupervisor" name="supervisor_id" required>
+                <!-- Default empty option for supervisor -->
+                <option value="">Select Supervisor</option>
+                <!-- Supervisor options populated by JavaScript from API -->
+              </select>
+            </div>
+          </form>
+        </div>
+        <!-- Modal footer with buttons -->
+        <div class="modal-footer">
+          <!-- Submit button for adding worker -->
+          <button type="button" class="btn btn-primary" onclick="document.getElementById('addWorkerForm').dispatchEvent(new Event('submit'));">Add Worker</button>
+          <!-- Cancel button to close modal -->
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('addWorkerModal').style.display='none';">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <!-- Toast notification container -->
+    <div id="toastContainer" class="toast-container">
+      <!-- Toast notifications will appear here -->
+    </div>
+    <!-- Link to site engineer JavaScript file -->
+    <script src="../js/siteEngineer.js"></script>
+  </body>
+</html>
