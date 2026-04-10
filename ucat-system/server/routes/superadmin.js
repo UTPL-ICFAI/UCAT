@@ -1,11 +1,11 @@
 // Import Express framework for routing
-import express from 'express';
+import express from "express";
 // Import database connection pool
-import pool from '../db.js';
+import pool from "../db.js";
 // Import bcrypt for password hashing
-import bcrypt from 'bcrypt';
+import bcrypt from "bcrypt";
 // Import role-based access control middleware
-import { requireRole } from '../middleware/role.js';
+import { requireRole } from "../middleware/role.js";
 
 // Create Express router instance
 const router = express.Router();
@@ -18,7 +18,7 @@ const router = express.Router();
  * Returns: projects, users, workers, documents, and issues counts
  * Requires: superadmin role authentication
  */
-router.get('/stats', requireRole('superadmin'), async (req, res) => {
+router.get("/stats", requireRole("superadmin"), async (req, res) => {
   // Handler: GET /api/superadmin/stats - Fetch all KPI statistics in single optimized query
   try {
     // Execute single combined query to fetch all statistics at once (much faster than 7 separate queries)
@@ -31,7 +31,7 @@ router.get('/stats', requireRole('superadmin'), async (req, res) => {
         (SELECT COUNT(*) FROM workers) as total_workers,
         (SELECT COUNT(*) FROM documents) as total_documents
     `);
-    
+
     // Extract single result row from optimized query
     const row = stats.rows[0];
     // Initialize gender statistics object with all values at zero
@@ -42,17 +42,17 @@ router.get('/stats', requireRole('superadmin'), async (req, res) => {
     genderStats.female = 0;
     // Initialize other gender worker count to zero
     genderStats.other = 0;
-    
+
     // Query gender breakdown separately (still fast since it's a single query)
     const genderBreakdown = await pool.query(`
       SELECT gender, COUNT(*) as count FROM workers WHERE gender IS NOT NULL GROUP BY gender
     `);
     // Iterate through database gender breakdown results
-    genderBreakdown.rows.forEach(rowGender => {
+    genderBreakdown.rows.forEach((rowGender) => {
       // Set count for specific gender from database result
       genderStats[rowGender.gender] = parseInt(rowGender.count);
     });
-    
+
     // Return all statistics as JSON response to client
     res.json({
       // Total number of all projects in system
@@ -71,12 +71,12 @@ router.get('/stats', requireRole('superadmin'), async (req, res) => {
       genderBreakdown: genderStats,
     });
     // Log successful stats retrieval
-    console.log('Stats fetched successfully for superadmin');
+    console.log("Stats fetched successfully for superadmin");
   } catch (error) {
     // Log database error to console
-    console.error('Error fetching stats:', error);
+    console.error("Error fetching stats:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to fetch statistics' });
+    res.status(500).json({ error: "Failed to fetch statistics" });
   }
 });
 
@@ -89,37 +89,38 @@ router.get('/stats', requireRole('superadmin'), async (req, res) => {
  * Returns: user objects with id, name, age, gender, employment_id, role, user_id, created_at
  * Requires: superadmin role authentication
  */
-router.get('/users', requireRole('superadmin'), async (req, res) => {
+router.get("/users", requireRole("superadmin"), async (req, res) => {
   // Handler: GET /api/superadmin/users - Fetch all users with optional role filter
   try {
     // Get optional role filter from query string
     const roleFilter = req.query.role;
     // Build SQL query string with optional role filtering
-    let query = 'SELECT id, name, age, gender, employment_id, role, user_id, created_at FROM users WHERE role != $1';
+    let query =
+      "SELECT id, name, age, gender, employment_id, role, user_id, created_at FROM users WHERE role != $1";
     // Initialize query parameters array with superadmin exclusion
-    let params = ['superadmin'];
-    
+    let params = ["superadmin"];
+
     // Check if role filter is provided in query string
     if (roleFilter) {
       // Append role filter to WHERE clause
-      query += ' AND role = $2';
+      query += " AND role = $2";
       // Add role filter value to parameters array
       params.push(roleFilter);
     }
     // Add ordering by created date descending
-    query += ' ORDER BY created_at DESC';
-    
+    query += " ORDER BY created_at DESC";
+
     // Execute query with parameters for parameterized queries (prevents SQL injection)
     const result = await pool.query(query, params);
     // Return array of user objects as JSON
     res.json(result.rows);
     // Log successful user retrieval
-    console.log('Users fetched successfully');
+    console.log("Users fetched successfully");
   } catch (error) {
     // Log database error to console
-    console.error('Error fetching users:', error);
+    console.error("Error fetching users:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to fetch users' });
+    res.status(500).json({ error: "Failed to fetch users" });
   }
 });
 
@@ -132,57 +133,88 @@ router.get('/users', requireRole('superadmin'), async (req, res) => {
  * Returns: created user object with id
  * Requires: superadmin role authentication
  */
-router.post('/users', requireRole('superadmin'), async (req, res) => {
+router.post("/users", requireRole("superadmin"), async (req, res) => {
   // Handler: POST /api/superadmin/users - Create new user in database
   try {
     // Destructure required fields from request body
-    const { name, age, gender, employment_id, role, user_id, password } = req.body;
-    
+    const { name, age, gender, employment_id, role, user_id, password } =
+      req.body;
+
+    // Check if employment_id already exists
+    const empCheck = await pool.query(
+      "SELECT id FROM users WHERE employment_id = $1",
+      [employment_id],
+    );
+
+    if (empCheck.rows.length > 0) {
+      return res.status(400).json({ error: "Employment ID already exists" });
+    }
+
+    // Check if user_id already exists
+    const userCheck = await pool.query(
+      "SELECT id FROM users WHERE user_id = $1",
+      [user_id],
+    );
+
+    if (userCheck.rows.length > 0) {
+      return res.status(400).json({ error: "User ID already exists" });
+    }
+
     // Validate that all required fields are present
     if (!name || !employment_id || !role || !user_id || !password) {
       // Return 400 error if required fields missing
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ error: "Missing required fields" });
     }
-    
+
     // Validate age value is numeric and between 1 and 99
     if (age && (isNaN(age) || age < 1 || age > 99)) {
       // Return 400 error for invalid age
-      return res.status(400).json({ error: 'Age must be between 1 and 99' });
+      return res.status(400).json({ error: "Age must be between 1 and 99" });
     }
-    
+
     // Validate gender value is one of allowed enum values
-    if (gender && !['male', 'female', 'other'].includes(gender.toLowerCase())) {
+    if (gender && !["male", "female", "other"].includes(gender.toLowerCase())) {
       // Return 400 error for invalid gender
-      return res.status(400).json({ error: 'Gender must be male, female, or other' });
+      return res
+        .status(400)
+        .json({ error: "Gender must be male, female, or other" });
     }
-    
+
     // Hash password using bcrypt with salt rounds of 10
     const hashedPassword = await bcrypt.hash(password, 10);
     // Hash password with bcrypt for secure storage (completes when done)
-    
+
     // Insert new user record into database
     const userResult = await pool.query(
       // SQL insert statement for users table
-      'INSERT INTO users (name, age, gender, employment_id, role, user_id, password_hash) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, age, gender, employment_id, role, user_id, created_at',
+      "INSERT INTO users (name, age, gender, employment_id, role, user_id, password_hash) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, age, gender, employment_id, role, user_id, created_at",
       // Parameter values for placeholder variables
-      [name, age || null, gender || null, employment_id, role, user_id, hashedPassword]
+      [
+        name,
+        age || null,
+        gender || null,
+        employment_id,
+        role,
+        user_id,
+        hashedPassword,
+      ],
     );
     // Extract newly created user from result
     const newUser = userResult.rows[0];
-    
+
     // Return newly created user object as JSON
     res.status(201).json({
       success: true,
-      message: 'User created successfully',
-      user: newUser
+      message: "User created successfully",
+      user: newUser,
     });
     // Log successful user creation
     console.log(`New user created: ${newUser.id} - ${newUser.name}`);
   } catch (error) {
     // Log database or validation error
-    console.error('Error creating user:', error);
+    console.error("Error creating user:", error.message);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to create user' });
+    res.status(500).json({ error: "Failed to create user" });
   }
 });
 
@@ -195,21 +227,21 @@ router.post('/users', requireRole('superadmin'), async (req, res) => {
  * Returns: updated user object
  * Requires: superadmin role authentication
  */
-router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
+router.put("/users/:id", requireRole("superadmin"), async (req, res) => {
   // Handler: PUT /api/superadmin/users/:id - Update user record in database
   try {
     // Get user ID from URL parameter
     const userId = req.params.id;
     // Destructure fields to update from request body
     const { name, age, gender, employment_id, role, password } = req.body;
-    
+
     // Build dynamic SQL update query based on provided fields
     let updateFields = [];
     // Initialize parameter values array
     let values = [];
     // Initialize parameter counter starting at 1
     let paramIndex = 1;
-    
+
     // Add name to update if provided
     if (name !== undefined) {
       // Add name field with placeholder
@@ -219,13 +251,13 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Add age to update if provided
     if (age !== undefined) {
       // Validate age is between 1 and 99
       if (age < 1 || age > 99) {
         // Return 400 error for invalid age
-        return res.status(400).json({ error: 'Age must be between 1 and 99' });
+        return res.status(400).json({ error: "Age must be between 1 and 99" });
       }
       // Add age field with placeholder
       updateFields.push(`age = $${paramIndex}`);
@@ -234,13 +266,15 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Add gender to update if provided
     if (gender !== undefined) {
       // Validate gender is one of allowed enum values
-      if (!['male', 'female', 'other'].includes(gender.toLowerCase())) {
+      if (!["male", "female", "other"].includes(gender.toLowerCase())) {
         // Return 400 error for invalid gender
-        return res.status(400).json({ error: 'Gender must be male, female, or other' });
+        return res
+          .status(400)
+          .json({ error: "Gender must be male, female, or other" });
       }
       // Add gender field with placeholder
       updateFields.push(`gender = $${paramIndex}`);
@@ -249,7 +283,7 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Add employment_id to update if provided
     if (employment_id !== undefined) {
       // Add employment_id field with placeholder
@@ -259,7 +293,7 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Add role to update if provided
     if (role !== undefined) {
       // Add role field with placeholder
@@ -269,9 +303,9 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Handle optional password update
-    if (password !== undefined && password !== '') {
+    if (password !== undefined && password !== "") {
       // Hash new password using bcrypt with 10 salt rounds
       const hashedPassword = await bcrypt.hash(password, 10);
       // Add password_hash field with placeholder
@@ -281,37 +315,37 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
       // Increment parameter counter
       paramIndex++;
     }
-    
+
     // Check if any fields were provided to update
     if (updateFields.length === 0) {
       // Return 400 error if no fields to update
-      return res.status(400).json({ error: 'No fields to update' });
+      return res.status(400).json({ error: "No fields to update" });
     }
-    
+
     // Add user ID as final parameter for WHERE clause
     values.push(userId);
-    
+
     // Build final SQL query with dynamic update fields
-    const query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING id, name, age, gender, employment_id, role, user_id, created_at`;
-    
+    const query = `UPDATE users SET ${updateFields.join(", ")} WHERE id = $${paramIndex} RETURNING id, name, age, gender, employment_id, role, user_id, created_at`;
+
     // Execute update query with all parameter values
     const result = await pool.query(query, values);
-    
+
     // Check if user was found and updated
     if (result.rows.length === 0) {
       // Return 404 error if user not found
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
-    
+
     // Return updated user object as JSON
     res.json(result.rows[0]);
     // Log successful user update
     console.log(`User updated: ${userId}`);
   } catch (error) {
     // Log database or validation error
-    console.error('Error updating user:', error);
+    console.error("Error updating user:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to update user' });
+    res.status(500).json({ error: "Failed to update user" });
   }
 });
 
@@ -324,35 +358,38 @@ router.put('/users/:id', requireRole('superadmin'), async (req, res) => {
  * Returns: success message
  * Requires: superadmin role authentication
  */
-router.delete('/users/:id', requireRole('superadmin'), async (req, res) => {
+router.delete("/users/:id", requireRole("superadmin"), async (req, res) => {
   // Handler: DELETE /api/superadmin/users/:id - Remove user from database
   try {
     // Get user ID from URL parameter
     const userId = req.params.id;
-    
+
     // Delete user permissions first (foreign key constraint)
-    await pool.query('DELETE FROM permissions WHERE user_id = $1', [userId]);
+    await pool.query("DELETE FROM permissions WHERE user_id = $1", [userId]);
     // Delete user permissions from database
-    
+
     // Delete the user record from database
-    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
+    const result = await pool.query(
+      "DELETE FROM users WHERE id = $1 RETURNING id",
+      [userId],
+    );
     // Execute delete query for user
-    
+
     // Check if user was found and deleted
     if (result.rows.length === 0) {
       // Return 404 error if user not found
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
-    
+
     // Return success message to client
-    res.json({ message: 'User deleted successfully' });
+    res.json({ message: "User deleted successfully" });
     // Log successful user deletion
     console.log(`User deleted: ${userId}`);
   } catch (error) {
     // Log database error to console
-    console.error('Error deleting user:', error);
+    console.error("Error deleting user:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to delete user' });
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
 
@@ -365,7 +402,7 @@ router.delete('/users/:id', requireRole('superadmin'), async (req, res) => {
  * Uses LEFT JOIN to include users without explicit permissions (defaults applied)
  * Requires: superadmin role authentication
  */
-router.get('/permissions/all', requireRole('superadmin'), async (req, res) => {
+router.get("/permissions/all", requireRole("superadmin"), async (req, res) => {
   // Handler: GET /api/superadmin/permissions/all - Fetch all users and their permissions
   try {
     // Query all users and build permissions matrix with default permissions based on role
@@ -378,21 +415,21 @@ router.get('/permissions/all', requireRole('superadmin'), async (req, res) => {
       WHERE u.role != 'superadmin'
       ORDER BY u.name ASC
     `);
-    
+
     // Build permissions array with default values based on user role
-    const permissions = result.rows.map(row => {
+    const permissions = result.rows.map((row) => {
       // Initialize permissions object for user
       let canView = true;
       // All users can view by default
-      let canEdit = row.role === 'project_manager';
+      let canEdit = row.role === "project_manager";
       // Only project managers can edit
-      let canDelete = row.role === 'project_manager';
+      let canDelete = row.role === "project_manager";
       // Only project managers can delete
-      let canManageUsers = row.role === 'project_manager';
+      let canManageUsers = row.role === "project_manager";
       // Only project managers can manage users
-      let canManageProjects = row.role === 'project_manager';
+      let canManageProjects = row.role === "project_manager";
       // Only project managers can manage projects
-      
+
       // Return permission object for user
       return {
         // User unique identifier
@@ -413,16 +450,16 @@ router.get('/permissions/all', requireRole('superadmin'), async (req, res) => {
         can_manage_projects: canManageProjects,
       };
     });
-    
+
     // Return permissions array as JSON
     res.json(permissions);
     // Log successful permissions retrieval
-    console.log('Permissions fetched successfully');
+    console.log("Permissions fetched successfully");
   } catch (error) {
     // Log database error to console
-    console.error('Error fetching permissions:', error);
+    console.error("Error fetching permissions:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to fetch permissions' });
+    res.status(500).json({ error: "Failed to fetch permissions" });
   }
 });
 
@@ -434,7 +471,7 @@ router.get('/permissions/all', requireRole('superadmin'), async (req, res) => {
  * Returns: array of activity objects with type, description, and timestamp
  * Requires: superadmin role authentication
  */
-router.get('/activity', requireRole('superadmin'), async (req, res) => {
+router.get("/activity", requireRole("superadmin"), async (req, res) => {
   // Handler: GET /api/superadmin/activity - Fetch recent system activity
   try {
     // Query recent user creation activity from users table
@@ -443,21 +480,21 @@ router.get('/activity', requireRole('superadmin'), async (req, res) => {
       ORDER BY created_at DESC LIMIT 10
     `);
     // Query recent user creation records (ordered by date)
-    
+
     // Query recent project creation activity from projects table
     const projectActivity = await pool.query(`
       SELECT 'Project Created' as type, name as description, created_at FROM projects
       ORDER BY created_at DESC LIMIT 10
     `);
     // Query recent project creation records (ordered by date)
-    
+
     // Query recent task creation activity from tasks table
     const taskActivity = await pool.query(`
       SELECT 'Task Created' as type, title as description, created_at FROM tasks
       ORDER BY created_at DESC LIMIT 10
     `);
     // Query recent task creation records (ordered by date)
-    
+
     // Combine all activity sources into single array
     let allActivity = [];
     // Initialize empty activity array
@@ -467,7 +504,7 @@ router.get('/activity', requireRole('superadmin'), async (req, res) => {
     // Add project creation activity to array
     allActivity = allActivity.concat(taskActivity.rows);
     // Add task creation activity to array
-    
+
     // Sort combined activity by created_at date in descending order (newest first)
     allActivity.sort((a, b) => {
       // Convert dates to timestamps
@@ -478,20 +515,20 @@ router.get('/activity', requireRole('superadmin'), async (req, res) => {
       // Return comparison (newest first)
       return dateB - dateA;
     });
-    
+
     // Take only first 20 most recent activities
     const recentActivity = allActivity.slice(0, 20);
     // Limit to 20 most recent items
-    
+
     // Return activity array as JSON
     res.json(recentActivity);
     // Log successful activity retrieval
-    console.log('Activity fetched successfully');
+    console.log("Activity fetched successfully");
   } catch (error) {
     // Log database error to console
-    console.error('Error fetching activity:', error);
+    console.error("Error fetching activity:", error);
     // Return 500 error response to client
-    res.status(500).json({ error: 'Failed to fetch activity' });
+    res.status(500).json({ error: "Failed to fetch activity" });
   }
 });
 
