@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS projects CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
 -- Create users table
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name VARCHAR(150) NOT NULL,
   age INTEGER CHECK (age >= 1 AND age <= 99),
@@ -205,7 +205,7 @@ CREATE TABLE communications (
 CREATE INDEX idx_communications_project_id ON communications(project_id);
 
 -- Create templates table
-CREATE TABLE templates (
+CREATE TABLE IF NOT EXISTS templates (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   name VARCHAR(200) NOT NULL,
@@ -218,9 +218,9 @@ CREATE TABLE templates (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_templates_user_id ON templates(user_id);
-CREATE INDEX idx_templates_is_active ON templates(is_active);
-CREATE INDEX idx_templates_is_default ON templates(is_default);
+CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
+CREATE INDEX IF NOT EXISTS idx_templates_is_active ON templates(is_active);
+CREATE INDEX IF NOT EXISTS idx_templates_is_default ON templates(is_default);
 
 -- Create project_templates junction table (multiple templates per project)
 CREATE TABLE project_templates (

@@ -55,7 +55,7 @@ async function initializeDatabase() {
     console.error("❌ Error initializing database:", error.message);
     process.exit(1);
   } finally {
-    await client.end();
+    await client.release();
   }
 }
 

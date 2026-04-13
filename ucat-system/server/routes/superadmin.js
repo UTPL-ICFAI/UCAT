@@ -25,7 +25,7 @@ router.get("/stats", requireRole("superadmin"), async (req, res) => {
     const stats = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM projects) as total_projects,
-        (SELECT COUNT(*) FROM projects WHERE work_status = 'active') as active_projects,
+        (SELECT COUNT(*) FROM projects WHERE work_status IN ('ongoing', 'pending')) as active_projects,
         (SELECT COUNT(*) FROM users) as total_users,
         (SELECT COUNT(*) FROM troubleshoot_issues WHERE status = 'open') as open_issues,
         (SELECT COUNT(*) FROM workers) as total_workers,
@@ -57,7 +57,7 @@ router.get("/stats", requireRole("superadmin"), async (req, res) => {
     res.json({
       // Total number of all projects in system
       totalProjects: parseInt(row.total_projects),
-      // Count of projects with active work status
+      // Count of projects with active work status (ongoing AND pending)
       activeProjects: parseInt(row.active_projects),
       // Total count of user accounts created
       totalUsers: parseInt(row.total_users),
@@ -65,7 +65,7 @@ router.get("/stats", requireRole("superadmin"), async (req, res) => {
       openIssues: parseInt(row.open_issues),
       // Total workers currently registered on sites
       totalWorkers: parseInt(row.total_workers),
-      // Total documents uploaded to system
+      // Total documents uploaded to system (from all projects)
       totalDocuments: parseInt(row.total_documents),
       // Gender breakdown of workers by type
       genderBreakdown: genderStats,
