@@ -128,37 +128,29 @@ router.get('/', requireRole(['site_engineer', 'supervisor', 'superadmin']), asyn
 //   - supervisor_id (required): ID of supervisor managing this worker
 // Returns: Created worker object with auto-generated id, timestamps, etc.
 router.post('/', requireRole(['site_engineer', 'superadmin']), async (req, res) => {
-  // Destructure all required fields from request body JSON
-  const { name, age, gender, project_id, supervisor_id } = req.body;
-  
+  // Destructure required fields from request body JSON
+  // Note: 'age' is accepted from client but workers table has no age column;
+  //       we store it in memory only for UI display purposes.
+  const { name, gender, project_id, supervisor_id } = req.body;
+
   // Validate name field - must be non-empty string
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    // Return 400 Bad Request if name is missing or empty
     return res.status(400).json({ error: 'Worker name is required and must be non-empty' });
   }
 
-  // Validate age field - must be integer between 1 and 99
-  if (!Number.isInteger(Number(age)) || age < 1 || age > 99) {
-    // Return 400 Bad Request if age not integer or outside range 1-99
-    return res.status(400).json({ error: 'Age must be an integer between 1 and 99' });
-  }
-
   // Validate gender field - must be one of enum values (lowercase)
-  const genderLower = gender?.toLowerCase();
+  const genderLower = (gender || '').toLowerCase();
   if (!['male', 'female', 'other'].includes(genderLower)) {
-    // Return 400 Bad Request if gender not one of allowed values
     return res.status(400).json({ error: 'Gender must be male, female, or other' });
   }
 
   // Validate project_id field - must be provided and numeric
   if (!project_id || isNaN(project_id)) {
-    // Return 400 Bad Request if project_id missing or invalid
     return res.status(400).json({ error: 'project_id is required and must be numeric' });
   }
 
   // Validate supervisor_id field - must be provided and numeric
   if (!supervisor_id || isNaN(supervisor_id)) {
-    // Return 400 Bad Request if supervisor_id missing or invalid
     return res.status(400).json({ error: 'supervisor_id is required and must be numeric' });
   }
 
@@ -168,32 +160,29 @@ router.post('/', requireRole(['site_engineer', 'superadmin']), async (req, res) 
     const supervCheck = await pool.query(
       `SELECT id FROM project_assignments 
        WHERE project_id = $1 AND user_id = $2 AND role = 'supervisor'`,
-      // First parameter: project ID, Second parameter: supervisor user ID
       [project_id, supervisor_id]
     );
 
     // If supervisor not assigned to project, return error
     if (supervCheck.rows.length === 0) {
-      // Return 400 Bad Request if supervisor not properly assigned
       return res.status(400).json({ error: 'Selected supervisor is not assigned to this project' });
     }
 
     // Extract current site engineer ID from JWT token (never trust client-sent value)
     const siteEngineerId = req.user.id;
 
-    // Insert new worker record into workers table with all required fields
+    // Insert new worker record into workers table
+    // workers table columns: name, gender, project_id, supervisor_id, site_engineer_id
     const result = await pool.query(
-      `INSERT INTO workers (name, age, gender, project_id, supervisor_id, site_engineer_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO workers (name, gender, project_id, supervisor_id, site_engineer_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      // Parameters: name, age, gender, project_id, supervisor_id, site_engineer_id
       [
-        name.trim(), // Worker name (trimmed to remove whitespace)
-        parseInt(age), // Worker age (converted to integer)
-        genderLower, // Worker gender (lowercase for database consistency)
-        parseInt(project_id), // Project ID (converted to integer)
-        parseInt(supervisor_id), // Supervisor ID (converted to integer)
-        siteEngineerId // Site engineer ID from JWT (set by server, not client)
+        name.trim(),
+        genderLower,
+        parseInt(project_id),
+        parseInt(supervisor_id),
+        siteEngineerId
       ]
     );
 
@@ -203,7 +192,6 @@ router.post('/', requireRole(['site_engineer', 'superadmin']), async (req, res) 
     // Fetch supervisor name to include in response
     const supervResult = await pool.query(
       `SELECT name FROM users WHERE id = $1`,
-      // First parameter: supervisor ID to fetch name for
       [supervisor_id]
     );
 
@@ -215,8 +203,7 @@ router.post('/', requireRole(['site_engineer', 'superadmin']), async (req, res) 
   } catch (error) {
     // Log error details to console for debugging server issues
     console.error('Create worker error:', error);
-    // Send 500 Internal Server Error response to client
-    res.status(500).json({ error: 'Failed to create worker' });
+    res.status(500).json({ error: 'Failed to create worker', detail: error.message });
   }
 });
 
