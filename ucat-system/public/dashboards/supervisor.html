@@ -16,6 +16,7 @@
         <li class="top-nav-item"><a href="#attendance" class="top-nav-link" onclick="navigateSection('attendance')">Attendance</a></li>
         <li class="top-nav-item"><a href="#upload" class="top-nav-link" onclick="navigateSection('upload')">Upload Images</a></li>
         <li class="top-nav-item"><a href="#issues" class="top-nav-link" onclick="navigateSection('issues')">Issues</a></li>
+        <li class="top-nav-item"><a href="#" class="top-nav-link" onclick="navigateSection('chat'); return false;">Chat</a></li>
       </ul>
       <div class="top-nav-user">
         <span>Welcome, <strong id="userName">Supervisor</strong></span>
@@ -109,6 +110,29 @@
         </div>
       </section>
       
+      <!-- Chat Section -->
+      <section id="chat" class="page-section hidden">
+        <div class="top-bar">
+          <h1 class="page-title">Project Chat</h1>
+        </div>
+        <div class="card">
+          <div class="form-group">
+            <label>Select Project *</label>
+            <select id="chatProjectSelect" onchange="loadChatForProject()">
+              <option value="">Choose a project...</option>
+            </select>
+          </div>
+          <div id="chatArea" style="display:none; margin-top: 15px;">
+            <div id="chatProjectTitle" style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #333;"></div>
+            <div id="svChatMessages" style="background: #f9f9f9; padding: 15px; border-radius: 6px; height: 380px; overflow-y: auto; margin-bottom: 15px; border: 1px solid #e5e7eb;"></div>
+            <div style="display: flex; gap: 10px;">
+              <textarea id="svMessageInput" placeholder="Type a message..." style="flex: 1; height: 60px; resize: none; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;"></textarea>
+              <button class="btn" onclick="svSendMessage()" style="height: 60px; align-self: flex-end; background: #f59e0b; color: white; border: none; padding: 0 20px; border-radius: 4px; cursor: pointer;">Send</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Issues Section -->
       <section id="issues" class="page-section hidden">
         <div class="top-bar flex-between">
