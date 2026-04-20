@@ -170,9 +170,28 @@ function updateProjectSidebar() {
 async function selectProject(projectId) {
   currentProjectId = projectId;
 
-  const project = allProjects.find((p) => p.id === projectId);
+  let project = allProjects.find((p) => p.id === projectId);
   if (!project) return;
 
+  // ✅ FIX: Fetch full project details (with assignments)
+  try {
+    const detailRes = await fetch(`/api/projects/${projectId}`);
+    if (detailRes.ok) {
+      const fullProject = await detailRes.json();
+
+      // Replace project in allProjects with full data
+      const idx = allProjects.findIndex((p) => p.id === projectId);
+      if (idx !== -1) {
+        allProjects[idx] = fullProject;
+      }
+
+      project = fullProject;
+    }
+  } catch (err) {
+    console.warn("Could not fetch project detail:", err);
+  }
+
+  // UI updates
   document.getElementById("projectsGrid").style.display = "none";
   document.getElementById("projectDetail").style.display = "block";
   document.getElementById("pageTitle").textContent = project.name;
@@ -228,7 +247,7 @@ async function loadProjectTasks() {
     assignSelect.innerHTML =
       '<option value="">Select a Site Engineer</option>' +
       seList
-        .map((se) => `<option value="${se.user_id}">${se.name}</option>`)
+        .map((se) => `<option value="${se.user_db_id}">${se.name}</option>`)
         .join("");
 
     const tbody = document.getElementById("tasksTableBody");

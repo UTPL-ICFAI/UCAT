@@ -232,9 +232,13 @@ router.get("/:id", async (req, res) => {
 
     // Get assigned users
     const assignmentsResult = await pool.query(
-      `SELECT pa.*, u.name, u.user_id, u.employment_id FROM project_assignments pa
-       JOIN users u ON pa.user_id = u.id
-       WHERE pa.project_id = $1`,
+      `SELECT
+  pa.user_id AS user_db_id,   -- integer for DB inserts
+  u.user_id  AS user_string_id, -- string "SE001" for display
+  u.name, u.employment_id, pa.role, pa.assigned_at
+FROM project_assignments pa
+JOIN users u ON pa.user_id = u.id
+WHERE pa.project_id = $1`,
       [id],
     );
 
@@ -339,11 +343,9 @@ router.patch(
       }
 
       if (!["ongoing", "pending", "completed"].includes(work_status)) {
-        return res
-          .status(400)
-          .json({
-            error: "Invalid status. Must be: ongoing, pending, or completed",
-          });
+        return res.status(400).json({
+          error: "Invalid status. Must be: ongoing, pending, or completed",
+        });
       }
 
       // Verify project manager is assigned to this project
@@ -375,9 +377,13 @@ router.patch(
 
       // Get assigned users
       const assignmentsResult = await pool.query(
-        `SELECT pa.*, u.name, u.user_id, u.employment_id FROM project_assignments pa
-       JOIN users u ON pa.user_id = u.id
-       WHERE pa.project_id = $1`,
+        `SELECT
+  pa.user_id AS user_db_id,   -- integer for DB inserts
+  u.user_id  AS user_string_id, -- string "SE001" for display
+  u.name, u.employment_id, pa.role, pa.assigned_at
+FROM project_assignments pa
+JOIN users u ON pa.user_id = u.id
+WHERE pa.project_id = $1`,
         [id],
       );
 

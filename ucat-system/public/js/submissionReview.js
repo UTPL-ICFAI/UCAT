@@ -32,8 +32,9 @@ function loadPMSubmissions() {
   })
     .then((response) => response.json())
     .then((data) => {
-      if (data.success && Array.isArray(data.submissions)) {
-        let submissions = data.submissions;
+      // FIX: API returns { success, data }, not { success, submissions }
+      if (data.success && Array.isArray(data.data)) {
+        let submissions = data.data;
 
         // Apply filters
         if (templateFilter) {
