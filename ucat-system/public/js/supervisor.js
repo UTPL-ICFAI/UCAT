@@ -119,6 +119,8 @@ function navigateSection(sectionId) {
     loadUploadProjects();
   } else if (sectionId === 'issues') {
     loadIssues();
+  } else if (sectionId === 'chat') {
+    populateChatProjectSelect();
   }
 }
 
@@ -161,6 +163,12 @@ function displayProjectCards() {
       <p><strong>Location:</strong> ${project.location}</p>
       <p><strong>City:</strong> ${project.city}</p>
       <p><strong>Status:</strong> <span class="badge badge-${project.work_status === 'active' ? 'success' : 'secondary'}">${project.work_status}</span></p>
+      <div style="margin-top:14px;">
+        <button onclick="openProjectChat(${project.id}, '${project.name.replace(/'/g, "\\'")}')"
+          style="background:#4f46e5; color:white; border:none; padding:7px 16px; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600;">
+          💬 Chat
+        </button>
+      </div>
     </div>
   `).join('');
 }
@@ -409,7 +417,121 @@ async function loadIssues() {
   }
 }
 
-// Initialize
+// ─── Chat ────────────────────────────────────────────────────────────────────
+
+let svChatProjectId = null;
+let svChatMessages = [];
+
+function populateChatProjectSelect() {
+  const select = document.getElementById('chatProjectSelect');
+  if (!select) return;
+  // Only rebuild the list if it is still empty (avoids duplicate options)
+  if (select.options.length <= 1) {
+    allProjects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      select.appendChild(opt);
+    });
+  }
+  // If openProjectChat already set svChatProjectId, pre-select & load
+  if (svChatProjectId) {
+    select.value = svChatProjectId;
+    if (select.value == svChatProjectId) loadChatForProject();
+  }
+}
+
+function openProjectChat(projectId, projectName) {
+  svChatProjectId = projectId;
+  // Switch to chat section
+  document.querySelectorAll('.page-section').forEach(s => s.classList.add('hidden'));
+  document.getElementById('chat').classList.remove('hidden');
+  document.querySelectorAll('.top-nav-link').forEach(l => {
+    l.classList.toggle('active', l.textContent.trim() === 'Chat');
+  });
+  // Populate select and load messages
+  const select = document.getElementById('chatProjectSelect');
+  populateChatProjectSelect();
+  select.value = projectId;
+  document.getElementById('chatProjectTitle').textContent = '💬 ' + projectName;
+  document.getElementById('chatArea').style.display = 'block';
+  loadChatForProject();
+}
+
+async function loadChatForProject() {
+  const select = document.getElementById('chatProjectSelect');
+  const projectId = (select && select.value) ? select.value : svChatProjectId;
+  if (!projectId) {
+    document.getElementById('chatArea').style.display = 'none';
+    return;
+  }
+  svChatProjectId = parseInt(projectId);
+  const project = allProjects.find(p => p.id === svChatProjectId);
+  document.getElementById('chatProjectTitle').textContent = project ? '💬 ' + project.name : '💬 Project Chat';
+  document.getElementById('chatArea').style.display = 'block';
+  try {
+    const token = localStorage.getItem('auth_token');
+    const res = await fetch(`/api/communications?project_id=${projectId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error('Failed to load messages');
+    svChatMessages = await res.json();
+    displaySvChat();
+  } catch (err) {
+    console.error('Load chat error:', err);
+    showToast('Failed to load messages', 'error');
+  }
+}
+
+function displaySvChat() {
+  const chatDiv = document.getElementById('svChatMessages');
+  if (!chatDiv) return;
+  const msgs = [...svChatMessages].reverse(); // oldest first
+  if (msgs.length === 0) {
+    chatDiv.innerHTML = '<p style="color:#999;text-align:center;margin-top:20px;">No messages yet. Start the conversation!</p>';
+    return;
+  }
+  chatDiv.innerHTML = msgs.map(msg => {
+    const isMe = currentUser && msg.sender_id === currentUser.id;
+    return `
+      <div style="margin-bottom:14px;display:flex;flex-direction:column;align-items:${isMe ? 'flex-end' : 'flex-start'};">
+        <div style="max-width:70%;background:${isMe ? '#4f46e5' : '#fff'};color:${isMe ? '#fff' : '#333'};padding:10px 14px;border-radius:${isMe ? '12px 12px 4px 12px' : '12px 12px 12px 4px'};box-shadow:0 1px 3px rgba(0,0,0,.08);">
+          <div style="font-size:11px;font-weight:600;margin-bottom:4px;opacity:.75;">${isMe ? 'You' : (msg.sender_name || 'Team Member')}</div>
+          <div style="font-size:14px;line-height:1.4;">${msg.message}</div>
+        </div>
+        <div style="font-size:11px;color:#999;margin-top:3px;">${formatDate(msg.sent_at)}</div>
+      </div>`;
+  }).join('');
+  chatDiv.scrollTop = chatDiv.scrollHeight;
+}
+
+async function svSendMessage() {
+  const input = document.getElementById('svMessageInput');
+  const message = (input ? input.value : '').trim();
+  if (!message || !svChatProjectId) return;
+  showLoading(true);
+  try {
+    const token = localStorage.getItem('auth_token');
+    const res = await fetch('/api/communications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ project_id: svChatProjectId, message })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to send');
+    }
+    input.value = '';
+    await loadChatForProject();
+  } catch (err) {
+    console.error('Send error:', err);
+    showToast(err.message || 'Failed to send message', 'error');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ─── Initialize ───────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const token = localStorage.getItem('auth_token');
   if (!token) {
@@ -435,6 +557,11 @@ document.addEventListener('DOMContentLoaded', () => {
   
   loadProjects();
   loadRecentUploads();
+
+  // Enter key (without Shift) sends chat message
+  document.getElementById('svMessageInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); svSendMessage(); }
+  });
   
   const style = document.createElement('style');
   style.textContent = `

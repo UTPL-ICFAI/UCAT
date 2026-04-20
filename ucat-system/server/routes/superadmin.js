@@ -25,7 +25,7 @@ router.get('/stats', requireRole('superadmin'), async (req, res) => {
     const stats = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM projects) as total_projects,
-        (SELECT COUNT(*) FROM projects WHERE work_status = 'active') as active_projects,
+        (SELECT COUNT(*) FROM projects WHERE work_status IN ('active', 'ongoing')) as active_projects,
         (SELECT COUNT(*) FROM users) as total_users,
         (SELECT COUNT(*) FROM troubleshoot_issues WHERE status = 'open') as open_issues,
         (SELECT COUNT(*) FROM workers) as total_workers,

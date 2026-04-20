@@ -4,8 +4,8 @@ import { requireRole } from '../middleware/role.js';
 
 const router = express.Router();
 
-// Send communication message (PM and SE)
-router.post('/', requireRole('project_manager', 'site_engineer'), async (req, res) => {
+// Send communication message (PM, SE, and Supervisor)
+router.post('/', requireRole('project_manager', 'site_engineer', 'supervisor'), async (req, res) => {
   try {
     const { project_id, message } = req.body;
     

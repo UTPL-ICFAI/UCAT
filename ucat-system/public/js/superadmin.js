@@ -856,16 +856,31 @@ function handleCreateProject(e) {
   const insuranceDetails = document.getElementById('insuranceDetails').value;
   // Get the safety certifications from the form
   const safetyCertifications = document.getElementById('safetyCertifications').value;
-  // Get the project manager ID value from the form
-  const projectManager = document.getElementById('projectManagerSelect').value;
-  // Get the site engineer ID value from the form
-  const siteEngineer = document.getElementById('siteEngineerSelect').value;
-  // Get the supervisor ID value from the form (optional)
-  const supervisor = document.getElementById('supervisorSelect').value;
-  // Get template assignment details
-  const templateId = document.getElementById('templateSelect').value;
+  // Get all selected project manager IDs from multi-select
+  const pmSelect = document.getElementById('projectManagerSelect');
+  const projectManagers = Array.from(pmSelect.selectedOptions).map(o => parseInt(o.value)).filter(Boolean);
+  // Get all selected site engineer IDs from multi-select
+  const seSelect = document.getElementById('siteEngineerSelect');
+  const siteEngineers = Array.from(seSelect.selectedOptions).map(o => parseInt(o.value)).filter(Boolean);
+  // Get all selected supervisor IDs from multi-select (optional)
+  const supSelect = document.getElementById('supervisorSelect');
+  const supervisors = Array.from(supSelect.selectedOptions).map(o => parseInt(o.value)).filter(Boolean);
+  // Get all selected template IDs from multi-select
+  const tplSelect = document.getElementById('templateSelect');
+  const selectedTemplateIds = Array.from(tplSelect.selectedOptions).map(o => parseInt(o.value)).filter(Boolean);
+  // Get repetition type and days (applied to all selected templates)
   const repetitionType = document.getElementById('repetitionType').value;
   const repetitionDays = document.getElementById('repetitionDays').value;
+
+  // Validate at least one PM and SE selected
+  if (projectManagers.length === 0) {
+    showToast('Please select at least one Project Manager', 'error');
+    return;
+  }
+  if (siteEngineers.length === 0) {
+    showToast('Please select at least one Site Engineer', 'error');
+    return;
+  }
   // Get the JWT token from localStorage for authentication
   const token = localStorage.getItem('auth_token');
   // Make API request to create new project with all construction fields
@@ -920,14 +935,14 @@ function handleCreateProject(e) {
       safety_certifications: {
         certifications: safetyCertifications
       },
-      // Project manager ID
-      projectManagers: [projectManager],
-      // Site engineer ID
-      siteEngineers: [siteEngineer],
-      // Supervisor ID (optional)
-      supervisors: supervisor ? [supervisor] : [],
-      // Template assignment details
-      template_id: templateId ? parseInt(templateId) : null,
+      // Project managers array (all selected)
+      projectManagers: projectManagers,
+      // Site engineers array (all selected)
+      siteEngineers: siteEngineers,
+      // Supervisors array (all selected, optional)
+      supervisors: supervisors,
+      // First selected template ID (or null)
+      template_id: selectedTemplateIds.length > 0 ? selectedTemplateIds[0] : null,
       repetition_type: repetitionType || null,
       repetition_days: repetitionDays ? repetitionDays.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d)) : []
     })
@@ -994,22 +1009,29 @@ function loadTemplatesForDropdown() {
       // Handle both response formats
       const templates = (data.success && data.templates) ? data.templates : (Array.isArray(data) ? data : []);
       
-      // Clear existing options
-      templateSelect.innerHTML = '<option value="">Choose a template...</option>';
+      // Clear existing options (no placeholder for multi-select)
+      templateSelect.innerHTML = '';
       
-      // Add all templates as options
-      templates.forEach(template => {
-        const option = document.createElement('option');
-        option.value = template.id;
-        option.textContent = template.name + (template.is_default ? ' (Default)' : '');
-        templateSelect.appendChild(option);
-      });
+      if (templates.length === 0) {
+        const opt = document.createElement('option');
+        opt.disabled = true;
+        opt.textContent = 'No templates available';
+        templateSelect.appendChild(opt);
+      } else {
+        // Add all templates as options
+        templates.forEach(template => {
+          const option = document.createElement('option');
+          option.value = template.id;
+          option.textContent = template.name + (template.is_default ? ' ★ Default' : '');
+          templateSelect.appendChild(option);
+        });
+      }
       
       console.log('Templates loaded in dropdown:', templates.length);
     })
     .catch(error => {
       console.error('Error loading templates for dropdown:', error);
-      templateSelect.innerHTML = '<option value="">Error loading templates</option>';
+      templateSelect.innerHTML = '<option disabled>Error loading templates</option>';
     });
 }
 
@@ -1080,8 +1102,6 @@ function loadUsersForDropdowns() {
       const supervisors = users.filter(u => u.role === 'supervisor');
       // Get the project manager select element
       const pmSelect = document.getElementById('projectManagerSelect');
-      // Clear existing options except the default one
-      pmSelect.innerHTML = '<option value="">Select Project Manager</option>';
       // Loop through project managers and add as options
       projectManagers.forEach(pm => {
         // Create a new option element
@@ -1095,8 +1115,6 @@ function loadUsersForDropdowns() {
       });
       // Get the site engineer select element
       const seSelect = document.getElementById('siteEngineerSelect');
-      // Clear existing options except the default one
-      seSelect.innerHTML = '<option value="">Select Site Engineer</option>';
       // Loop through site engineers and add as options
       siteEngineers.forEach(se => {
         // Create a new option element
@@ -1110,8 +1128,6 @@ function loadUsersForDropdowns() {
       });
       // Get the supervisor select element
       const supSelect = document.getElementById('supervisorSelect');
-      // Clear existing options except the default one
-      supSelect.innerHTML = '<option value="">Select Supervisor</option>';
       // Loop through supervisors and add as options
       supervisors.forEach(sup => {
         // Create a new option element

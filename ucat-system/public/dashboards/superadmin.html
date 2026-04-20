@@ -336,33 +336,27 @@
             <!-- Project Manager Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for project manager select -->
-              <label for="projectManagerSelect">Project Manager *</label>
-              <!-- Select dropdown for project manager with options populated by JS -->
-              <select id="projectManagerSelect" name="projectManagerSelect" required>
-                <!-- Default empty option for project manager -->
-                <option value="">Select Project Manager</option>
+              <label for="projectManagerSelect">Project Manager * <small style="font-weight:400;color:#888;">(hold Ctrl/Cmd to select multiple)</small></label>
+              <!-- Multi-select for project managers -->
+              <select id="projectManagerSelect" name="projectManagerSelect" required multiple size="4" style="min-height:80px;">
                 <!-- Project manager options populated by JavaScript -->
               </select>
             </div>
             <!-- Site Engineer Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for site engineer select -->
-              <label for="siteEngineerSelect">Site Engineer *</label>
-              <!-- Select dropdown for site engineer with options populated by JS -->
-              <select id="siteEngineerSelect" name="siteEngineerSelect" required>
-                <!-- Default empty option for site engineer -->
-                <option value="">Select Site Engineer</option>
+              <label for="siteEngineerSelect">Site Engineer * <small style="font-weight:400;color:#888;">(hold Ctrl/Cmd to select multiple)</small></label>
+              <!-- Multi-select for site engineers -->
+              <select id="siteEngineerSelect" name="siteEngineerSelect" required multiple size="4" style="min-height:80px;">
                 <!-- Site engineer options populated by JavaScript -->
               </select>
             </div>
             <!-- Supervisor Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for supervisor select -->
-              <label for="supervisorSelect">Supervisor</label>
-              <!-- Select dropdown for supervisor with options populated by JS -->
-              <select id="supervisorSelect" name="supervisorSelect">
-                <!-- Default empty option for supervisor -->
-                <option value="">Select Supervisor</option>
+              <label for="supervisorSelect">Supervisor <small style="font-weight:400;color:#888;">(hold Ctrl/Cmd to select multiple)</small></label>
+              <!-- Multi-select for supervisors -->
+              <select id="supervisorSelect" name="supervisorSelect" multiple size="4" style="min-height:80px;">
                 <!-- Supervisor options populated by JavaScript -->
               </select>
             </div>
@@ -372,11 +366,9 @@
             <!-- Template Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for template select -->
-              <label for="templateSelect">Select Template *</label>
-              <!-- Select dropdown for template selection -->
-              <select id="templateSelect" name="templateSelect" required>
-                <!-- Default empty option for template -->
-                <option value="">Choose a template...</option>
+              <label for="templateSelect">Select Template(s) <small style="font-weight:400;color:#888;">(hold Ctrl/Cmd to select multiple)</small></label>
+              <!-- Multi-select for templates -->
+              <select id="templateSelect" name="templateSelect" multiple size="4" style="min-height:80px;">
                 <!-- Template options populated by JavaScript -->
               </select>
             </div>
