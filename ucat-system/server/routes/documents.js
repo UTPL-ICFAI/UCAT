@@ -61,7 +61,8 @@ router.post('/', upload.single('document'), requireRole('project_manager', 'site
       return res.status(403).json({ error: 'Not assigned to this project' });
     }
     
-    const filePath = path.join('uploads/documents', String(project_id), req.file.filename);
+    // Use forward slashes for the database file_path so express.static can serve it consistently across OS
+    const filePath = 'uploads/documents/' + String(project_id) + '/' + req.file.filename;
     
     const result = await pool.query(
       `INSERT INTO documents (project_id, uploaded_by, title, file_path, original_name, doc_type, revision_no, drawing_no, discipline, sub_discipline, design_status, doc_status, package, corridor, category, confidential, revision_date, doc_date, weightage, remarks)
@@ -153,6 +154,52 @@ router.get('/search', async (req, res) => {
   } catch (error) {
     console.error('Search documents error:', error);
     res.status(500).json({ error: 'Failed to search documents' });
+  }
+});
+
+// Delete document
+router.delete('/:id', requireRole('superadmin', 'project_manager'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get document first to check permissions and get file path
+    const docResult = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
+    
+    if (docResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    const doc = docResult.rows[0];
+    
+    // Only superadmin or the project manager of this project can delete
+    if (req.user.role !== 'superadmin') {
+      const assignmentResult = await pool.query(
+        'SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = $3',
+        [doc.project_id, req.user.id, 'project_manager']
+      );
+      
+      if (assignmentResult.rows.length === 0) {
+        return res.status(403).json({ error: 'Not authorized to delete this document' });
+      }
+    }
+    
+    // Delete from database
+    await pool.query('DELETE FROM documents WHERE id = $1', [id]);
+    
+    // Delete file from disk if it exists
+    if (doc.file_path && fs.existsSync(doc.file_path)) {
+      try {
+        fs.unlinkSync(doc.file_path);
+      } catch (err) {
+        console.error('Failed to delete file from disk:', err);
+        // Continue anyway since db record is deleted
+      }
+    }
+    
+    res.json({ success: true, message: 'Document deleted successfully' });
+  } catch (error) {
+    console.error('Delete document error:', error);
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 

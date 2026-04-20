@@ -323,12 +323,25 @@ async function updateTaskStatus(taskId, currentStatus) {
 
 async function loadProjectWorkers() {
   try {
-    const response = await fetch(`/api/workers?project_id=${currentProjectId}`);
+    const token = localStorage.getItem('auth_token');
+    
+    const response = await fetch(`/api/workers?project_id=${currentProjectId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     allWorkers = await response.json();
     
-    // Populate supervisor select
-    const supervisors = allWorkers.map(w => ({ id: w.supervisor_id, name: w.supervisor_name })).filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
-    document.getElementById('supervisorSelect').innerHTML = supervisors.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    // Populate supervisor select with actual backend data
+    const supResponse = await fetch(`/api/workers/supervisors?project_id=${currentProjectId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const supervisors = supResponse.ok ? await supResponse.json() : [];
+    
+    const supSelect = document.getElementById('supervisorSelect');
+    if (supSelect) {
+      supSelect.innerHTML = supervisors.length === 0 
+        ? '<option value="">No Supervisors Assigned to Project</option>' 
+        : supervisors.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    }
     
     const tbody = document.getElementById('workersTableBody');
     const html = allWorkers.map(w => `
@@ -382,22 +395,38 @@ async function handleAddWorker(e) {
   
   showLoading(true);
   try {
+    const token = localStorage.getItem('auth_token');
+    
+    const supervisorIdRaw = formData.get('supervisor_id');
+    if (!supervisorIdRaw) {
+      throw new Error("A numeric Supervisor ID is required for this project");
+    }
+    
     const response = await fetch('/api/workers', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({
         name: formData.get('name'),
+        age: parseInt(formData.get('age')),
+        gender: formData.get('gender'),
         project_id: currentProjectId,
-        supervisor_id: parseInt(formData.get('supervisor_id'))
+        supervisor_id: parseInt(supervisorIdRaw)
       })
     });
     
-    if (!response.ok) throw new Error('Failed to add worker');
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to add worker');
+    }
+    
     showToast('Worker added', 'success');
     closeModal('addWorkerModal');
     loadProjectWorkers();
   } catch (error) {
-    showToast('Failed to add worker', 'error');
+    showToast(error.message || 'Failed to add worker', 'error');
   } finally {
     showLoading(false);
   }
@@ -643,15 +672,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   
-  document.getElementById('addWorkerForm').addEventListener('submit', handleAddWorker);
-  document.getElementById('raiseIssueForm').addEventListener('submit', handleRaiseIssue);
-  document.getElementById('dailyReportForm').addEventListener('submit', handleDailyReportSubmit);
-  document.getElementById('searchBox').addEventListener('keyup', () => {
-    const term = document.getElementById('searchBox').value.toLowerCase();
-    if (currentProjectId) {
-      loadProjectWorkers();
-    }
-  });
+  const addWorkerForm = document.getElementById('addWorkerForm');
+  if (addWorkerForm) addWorkerForm.addEventListener('submit', handleAddWorker);
+  
+  const raiseIssueForm = document.getElementById('raiseIssueForm');
+  if (raiseIssueForm) raiseIssueForm.addEventListener('submit', handleRaiseIssue);
+  
+  const dailyReportForm = document.getElementById('dailyReportForm');
+  if (dailyReportForm) dailyReportForm.addEventListener('submit', handleDailyReportSubmit);
+  
+  const searchBox = document.getElementById('searchBox');
+  if (searchBox) {
+    searchBox.addEventListener('keyup', () => {
+      const term = searchBox.value.toLowerCase();
+      if (currentProjectId) {
+        loadProjectWorkers();
+      }
+    });
+  }
   
   loadProjects();
   

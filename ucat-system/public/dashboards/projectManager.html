@@ -176,10 +176,12 @@
                   <th>Category</th>
                   <th>Uploaded By</th>
                   <th>Date</th>
+                  <th>Preview</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="documentsTableBody">
-                <tr><td colspan="6">Loading documents...</td></tr>
+                <tr><td colspan="8">Loading documents...</td></tr>
               </tbody>
             </table>
           </div>
@@ -249,37 +251,51 @@
   
   <!-- Upload Document Modal -->
   <div id="uploadDocModal" class="modal">
-    <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-content" style="max-width: 900px;">
       <div class="modal-header">
         <span>Upload Document</span>
         <button class="modal-close" onclick="closeModal('uploadDocModal')">&times;</button>
       </div>
-      <form id="uploadDocForm">
-        <div class="form-group">
-          <label>Document File *</label>
-          <input type="file" name="document" accept=".pdf,.zip,.png,.jpg,.jpeg" required>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 0;">
+        <!-- Left Column: Form -->
+        <div>
+          <form id="uploadDocForm">
+            <div class="form-group">
+              <label>Document File *</label>
+              <input type="file" name="document" id="documentFileInput" accept=".pdf,.zip,.png,.jpg,.jpeg" required>
+            </div>
+            <div class="form-group">
+              <label>Title</label>
+              <input type="text" name="title">
+            </div>
+            <div class="form-group">
+              <label>Drawing Number</label>
+              <input type="text" name="drawing_no">
+            </div>
+            <div class="form-group">
+              <label>Discipline</label>
+              <input type="text" name="discipline">
+            </div>
+            <div class="form-group">
+              <label>Category</label>
+              <input type="text" name="category">
+            </div>
+            <div class="btn-group">
+              <button type="submit" class="btn">Upload</button>
+              <button type="button" class="btn btn-secondary" onclick="closeModal('uploadDocModal')">Cancel</button>
+            </div>
+          </form>
         </div>
-        <div class="form-group">
-          <label>Title</label>
-          <input type="text" name="title">
+        
+        <!-- Right Column: Preview -->
+        <div>
+          <label style="display:block; margin-bottom: 5px; font-weight: 500;">Document Preview</label>
+          <div id="documentPreviewContainer" style="border: 1px solid #ddd; border-radius: 4px; height: 100%; min-height: 380px; display: flex; align-items: center; justify-content: center; background: #f9f9f9; overflow: hidden;">
+            <p style="color: #999;">No document selected</p>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Drawing Number</label>
-          <input type="text" name="drawing_no">
-        </div>
-        <div class="form-group">
-          <label>Discipline</label>
-          <input type="text" name="discipline">
-        </div>
-        <div class="form-group">
-          <label>Category</label>
-          <input type="text" name="category">
-        </div>
-        <div class="btn-group">
-          <button type="submit" class="btn">Upload</button>
-          <button type="button" class="btn btn-secondary" onclick="closeModal('uploadDocModal')">Cancel</button>
-        </div>
-      </form>
+      </div>
     </div>
   </div>
   

@@ -39,7 +39,16 @@ router.get('/:projectId', requireRole('superadmin', 'project_manager', 'site_eng
     
     res.json({
       success: true,
-      projectTemplates: result.rows
+      data: result.rows.map(row => ({
+        ...row,
+        template: {
+          id: row.template_id,
+          name: row.name,
+          description: row.description,
+          fields: row.fields,
+          rows: row.rows
+        }
+      }))
     });
   } catch (error) {
     console.error('Error fetching project templates:', error);

@@ -155,7 +155,7 @@ router.get('/:id', async (req, res) => {
     
     // Get assigned users
     const assignmentsResult = await pool.query(
-      `SELECT pa.*, u.name, u.user_id, u.employment_id FROM project_assignments pa
+      `SELECT pa.*, u.name, u.user_id, u.employment_id, u.id as account_id FROM project_assignments pa
        JOIN users u ON pa.user_id = u.id
        WHERE pa.project_id = $1`,
       [id]

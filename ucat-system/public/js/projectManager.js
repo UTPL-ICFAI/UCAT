@@ -151,21 +151,38 @@ function updateProjectSidebar() {
 async function selectProject(projectId) {
   currentProjectId = projectId;
   
-  const project = allProjects.find(p => p.id === projectId);
+  let project = allProjects.find(p => p.id === projectId);
   if (!project) return;
   
+  try {
+    const res = await fetch('/api/projects/' + projectId, {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }
+    });
+    if (res.ok) {
+      project = await res.json();
+      const idx = allProjects.findIndex(p => p.id === projectId);
+      if (idx !== -1) allProjects[idx] = project;
+    }
+  } catch (err) {
+    console.error('Error fetching full project details:', err);
+  }
+  
   document.getElementById('projectsGrid').style.display = 'none';
-  document.getElementById('projectDetail').style.display = 'block';
+  
+  const detailPanel = document.getElementById('projectDetail');
+  detailPanel.style.display = 'block';
+  detailPanel.setAttribute('data-project-id', projectId);
+  
   document.getElementById('pageTitle').textContent = project.name;
   
   // Show project info
-  const info = project.assignments ? `
+  const info = `
     <p><strong>Location:</strong> ${project.location}</p>
     <p><strong>City:</strong> ${project.city}</p>
-    <p><strong>Budget:</strong> ₹${(project.total_budget || 0).toFixed(2)}</p>
+    <p><strong>Budget:</strong> ₹${parseFloat(project.total_budget || 0).toLocaleString()}</p>
     <p><strong>Status:</strong> <span class="badge badge-${project.work_status === 'active' ? 'success' : 'secondary'}">${project.work_status}</span></p>
     <p><strong>Created:</strong> ${formatDate(project.created_at)}</p>
-  ` : '';
+  `;
   document.getElementById('projectInfo').innerHTML = info;
   
   // Load project data
@@ -176,12 +193,17 @@ async function selectProject(projectId) {
   loadProjectCommunications();
   loadBudgetTracking();
   loadTeamInfo();
+  
+  if (typeof loadPMSubmissions === 'function') {
+    loadPMSubmissions();
+  }
 }
 
 function goBackToProjects() {
   currentProjectId = null;
   document.getElementById('projectsGrid').style.display = 'grid';
   document.getElementById('projectDetail').style.display = 'none';
+  document.getElementById('projectDetail').removeAttribute('data-project-id');
   document.getElementById('pageTitle').textContent = 'My Projects';
 }
 
@@ -194,7 +216,7 @@ async function loadProjectTasks() {
     const assignSelect = document.getElementById('taskAssignSelect');
     const project = allProjects.find(p => p.id === currentProjectId);
     const seList = project && project.assignments ? project.assignments.filter(a => a.role === 'site_engineer') : [];
-    assignSelect.innerHTML = seList.map(se => `<option value="${se.user_id}">${se.name}</option>`).join('');
+    assignSelect.innerHTML = seList.map(se => `<option value="${se.account_id || se.user_id}">${se.name}</option>`).join('');
     
     const tbody = document.getElementById('tasksTableBody');
     const html = allTasks.map(task => `
@@ -256,12 +278,43 @@ async function loadProjectDocuments() {
         <td>${doc.category || '-'}</td>
         <td>${doc.uploaded_by_name || 'Unknown'}</td>
         <td>${formatDateShort(doc.created_at)}</td>
+        <td>
+          <a href="/${doc.file_path ? doc.file_path.replace(/\\\\/g, '/') : ''}" target="_blank" class="btn btn-small btn-secondary">View</a>
+        </td>
+        <td>
+          <button class="btn btn-small btn-danger" onclick="deleteDocument(${doc.id})">Delete</button>
+        </td>
       </tr>
     `).join('');
     
-    document.getElementById('documentsTableBody').innerHTML = html || '<tr><td colspan="6">No documents yet</td></tr>';
+    document.getElementById('documentsTableBody').innerHTML = html || '<tr><td colspan="8">No documents yet</td></tr>';
   } catch (error) {
     console.error('Error loading documents:', error);
+  }
+}
+
+async function deleteDocument(docId) {
+  if (!confirm('Are you sure you want to delete this document?')) return;
+  
+  showLoading(true);
+  try {
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch(`/api/documents/${docId}`, {
+      method: 'DELETE',
+      headers: { 
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (!response.ok) throw new Error('Failed to delete document');
+    
+    showToast('Document deleted successfully', 'success');
+    loadProjectDocuments(); // Reload table
+  } catch (error) {
+    console.error('Error deleting document:', error);
+    showToast(error.message, 'error');
+  } finally {
+    showLoading(false);
   }
 }
 
@@ -419,23 +472,34 @@ async function handleAddTask(e) {
   const form = e.target;
   const formData = new FormData(form);
   
+  const assignedToRaw = formData.get('assigned_to');
+  // parseInt might return NaN for string IDs, which causes backend to throw 400 Bad Request
+  const assignedTo = parseInt(assignedToRaw);
+  
   const taskData = {
     project_id: currentProjectId,
-    assigned_to: parseInt(formData.get('assigned_to')),
+    assigned_to: isNaN(assignedTo) ? assignedToRaw : assignedTo,
     title: formData.get('title'),
     description: formData.get('description'),
-    due_date: formData.get('due_date')
+    due_date: formData.get('due_date') || null
   };
   
   showLoading(true);
   try {
+    const token = localStorage.getItem('auth_token');
     const response = await fetch('/api/tasks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify(taskData)
     });
     
-    if (!response.ok) throw new Error('Failed to create task');
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to create task');
+    }
     
     showToast('Task created successfully', 'success');
     closeModal('addTaskModal');
@@ -450,15 +514,51 @@ async function handleAddTask(e) {
 
 function openUploadDocModal() {
   document.getElementById('uploadDocForm').reset();
+  const previewContainer = document.getElementById('documentPreviewContainer');
+  if (previewContainer) {
+    previewContainer.innerHTML = '<p style="color: #999;">No document selected</p>';
+  }
   openModal('uploadDocModal');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const docInput = document.getElementById('documentFileInput');
+  if (docInput) {
+    docInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      const previewContainer = document.getElementById('documentPreviewContainer');
+      
+      if (!file) {
+        previewContainer.innerHTML = '<p style="color: #999;">No document selected</p>';
+        return;
+      }
+      
+      const fileType = file.type;
+      const fileURL = URL.createObjectURL(file);
+      
+      if (fileType.startsWith('image/')) {
+          previewContainer.innerHTML = `<img src="${fileURL}" style="max-width: 100%; max-height: 100%; object-fit: contain;">`;
+      } else if (fileType === 'application/pdf') {
+          previewContainer.innerHTML = `<iframe src="${fileURL}" style="width: 100%; height: 100%; border: none;"></iframe>`;
+      } else {
+          previewContainer.innerHTML = `<div style="text-align: center;"><p style="font-size: 48px; margin-bottom: 10px;">📄</p><p><strong>${file.name}</strong></p><p style="color: #666; font-size: 12px;">Preview not available for this file type.</p></div>`;
+      }
+    });
+  }
+});
 
 async function handleUploadDoc(e) {
   e.preventDefault();
   const form = e.target;
-  const formData = new FormData(form);
+  const originalFormData = new FormData(form);
+  const formData = new FormData();
   
+  // Append project_id FIRST so multer's diskStorage has it available before parsing the file
   formData.append('project_id', currentProjectId);
+  
+  for (const [key, value] of originalFormData.entries()) {
+    formData.append(key, value);
+  }
   
   showLoading(true);
   try {
@@ -493,14 +593,20 @@ function editTaskStatus(taskId) {
   const newStatus = prompt(`Current status: ${task.status}\nNew status (pending/in_progress/completed):`, task.status);
   if (!newStatus) return;
   
+  const token = localStorage.getItem('auth_token');
   fetch(`/api/tasks/${taskId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
     body: JSON.stringify({ status: newStatus })
   }).then(r => {
     if (r.ok) {
       showToast('Task updated', 'success');
       loadProjectTasks();
+    } else {
+      showToast('Failed to update task', 'error');
     }
   }).catch(e => showToast('Failed to update task', 'error'));
 }

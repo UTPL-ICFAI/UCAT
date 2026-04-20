@@ -73,21 +73,34 @@ router.get('/', requireRole(['site_engineer', 'supervisor', 'superadmin']), asyn
 
   // Try to execute database query to fetch workers
   try {
-    // Build query: superadmin sees all workers, others only see their own
-    const query = userRole === 'superadmin'
-      ? `SELECT w.*, u.name as supervisor_name 
-         FROM workers w
-         LEFT JOIN users u ON u.id = w.supervisor_id
-         WHERE w.project_id = $1
-         ORDER BY w.created_at DESC`
-      : `SELECT w.*, u.name as supervisor_name 
-         FROM workers w
-         LEFT JOIN users u ON u.id = w.supervisor_id
-         WHERE w.project_id = $1 AND w.site_engineer_id = $2
-         ORDER BY w.created_at DESC`;
-    
-    // Build parameter array: project_id + user_id (if not superadmin)
-    const params = userRole === 'superadmin' ? [project_id] : [project_id, userId];
+    // Build query based on role:
+    // - superadmin: sees all workers for the project
+    // - supervisor: sees workers assigned to them (by supervisor_id)
+    // - site_engineer: sees workers they added (by site_engineer_id)
+    let query, params;
+    if (userRole === 'superadmin') {
+      query = `SELECT w.*, u.name as supervisor_name 
+               FROM workers w
+               LEFT JOIN users u ON u.id = w.supervisor_id
+               WHERE w.project_id = $1
+               ORDER BY w.created_at DESC`;
+      params = [project_id];
+    } else if (userRole === 'supervisor') {
+      query = `SELECT w.*, u.name as supervisor_name 
+               FROM workers w
+               LEFT JOIN users u ON u.id = w.supervisor_id
+               WHERE w.project_id = $1 AND w.supervisor_id = $2
+               ORDER BY w.created_at DESC`;
+      params = [project_id, userId];
+    } else {
+      // site_engineer
+      query = `SELECT w.*, u.name as supervisor_name 
+               FROM workers w
+               LEFT JOIN users u ON u.id = w.supervisor_id
+               WHERE w.project_id = $1 AND w.site_engineer_id = $2
+               ORDER BY w.created_at DESC`;
+      params = [project_id, userId];
+    }
     // Execute the parameterized query with appropriate parameters
     const result = await pool.query(query, params);
 

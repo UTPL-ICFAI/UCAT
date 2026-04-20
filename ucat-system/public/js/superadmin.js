@@ -947,8 +947,8 @@ function handleCreateProject(e) {
           loadProjects();
           
           // If template was assigned, set it up for the project
-          if (templateId && data.data && data.data.id) {
-            assignTemplateToProject(data.data.id, templateId, repetitionType, repetitionDays);
+          if (templateId && data && data.id) {
+            assignTemplateToProject(data.id, templateId, repetitionType, repetitionDays);
           }
         });
       } else {
@@ -1601,8 +1601,151 @@ function viewProjectDetails(projectId) {
       <p style="padding: 0.5rem; white-space: pre-wrap;">${safetyCerts && Object.keys(safetyCerts).length > 0 ? JSON.stringify(safetyCerts, null, 2) : 'No safety certifications recorded'}</p>
     </div>
   `;
+  // Remove existing modal if any
+  const existingModal = document.getElementById('viewProjectDetailsModal');
+  if (existingModal) existingModal.remove();
+
+  // Create modal container
+  const modal = document.createElement('div');
+  modal.id = 'viewProjectDetailsModal';
+  modal.className = 'modal';
+  modal.style.display = 'flex';
+  modal.style.justifyContent = 'center';
+  modal.style.alignItems = 'center';
+  modal.style.position = 'fixed';
+  modal.style.top = '0';
+  modal.style.left = '0';
+  modal.style.width = '100%';
+  modal.style.height = '100%';
+  modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+  modal.style.zIndex = '1000';
+
+  const modalContent = `
+    <div class="modal-dialog" style="background: white; border-radius: 8px; max-width: 600px; width: 95%; max-height: 90vh; overflow-y: auto; padding: 2rem; position: relative; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+      <button onclick="document.getElementById('viewProjectDetailsModal').remove()" style="position: absolute; right: 1rem; top: 1rem; font-size: 1.5rem; border: none; background: transparent; cursor: pointer; color: #333;">&times;</button>
+      <div id="viewProjectContent">
+        ${detailsHtml}
+        <div style="margin-top: 1.5rem; border-top: 1px solid #eee; padding-top: 1rem; text-align: right;">
+          <button onclick="editProjectDetails(${project.id})" class="btn btn-primary" style="background: linear-gradient(135deg, #F5C400 0%, #c49a00 100%); color: #1C1C1E; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer;">Edit Project</button>
+        </div>
+      </div>
+    </div>
+  `;
+  modal.innerHTML = modalContent;
+  document.body.appendChild(modal);
+
+  // Close when clicking outside
+  modal.addEventListener('click', function(e) {
+    if (e.target === this) {
+      this.remove();
+    }
+  });
+
   // Display the detailed information in a simple alert (could be modal in production)
-  showToast('Project details loaded. Check console for full details.', 'info');
+  showToast('Project details loaded successfully.', 'success');
+}
+
+/**
+ * Switch the modal to show a form for editing the project
+ */
+window.editProjectDetails = function(projectId) {
+  const project = allProjects.find(p => p.id === projectId);
+  if (!project) return;
+  const content = document.getElementById('viewProjectContent');
+  
+  const roStyle = 'width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: #f5f5f5; color: #666; cursor: not-allowed;';
+  const rwStyle = 'width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;';
+  
+  const nameAttr = project.name ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  const locAttr = project.location ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  const cityAttr = project.city ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  
+  const startDateVal = project.start_date ? new Date(project.start_date).toISOString().split('T')[0] : '';
+  const startDateAttr = startDateVal ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  
+  const endDateVal = project.end_date ? new Date(project.end_date).toISOString().split('T')[0] : '';
+  const endDateAttr = endDateVal ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  
+  const budgetAttr = (project.total_budget && parseFloat(project.total_budget) > 0) ? `readonly style="${roStyle}"` : `style="${rwStyle}"`;
+  
+  content.innerHTML = `
+    <h2 style="margin-bottom: 1rem;">Edit Project: ${project.name}</h2>
+    <form id="editProjectFormInModal" onsubmit="submitEditProject(event, ${project.id})">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Project Name *</label>
+        <input type="text" name="name" value="${project.name || ''}" required ${nameAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Location *</label>
+        <input type="text" name="location" value="${project.location || ''}" required ${locAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">City *</label>
+        <input type="text" name="city" value="${project.city || ''}" required ${cityAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Start Date</label>
+        <input type="date" name="start_date" value="${startDateVal}" ${startDateAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">End Date</label>
+        <input type="date" name="end_date" value="${endDateVal}" ${endDateAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Total Budget (₹)</label>
+        <input type="number" name="total_budget" value="${project.total_budget || ''}" step="0.01" ${budgetAttr}>
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Allocated Budget (Phase wise) (₹)</label>
+        <input type="number" name="budget_allocated" value="${project.budget_allocated || ''}" step="0.01" style="${rwStyle}" placeholder="Enter allocated budget">
+      </div>
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; text-align: left;">Contractor Name</label>
+        <input type="text" name="contractor_name" value="${project.contractor_name || ''}" style="${rwStyle}">
+      </div>
+      <div style="margin-top: 1.5rem; text-align: right;">
+        <button type="button" class="btn btn-secondary" onclick="viewProjectDetails(${project.id})" style="padding: 10px 20px; background: #eee; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px;">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, #1a5490, #2e7db1); color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer;">Save Changes</button>
+      </div>
+    </form>
+  `;
+}
+
+/**
+ * Handle submit for editing project
+ */
+window.submitEditProject = function(event, projectId) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  const data = Object.fromEntries(formData.entries());
+  
+  // Format dates appropriately or omit if empty
+  if (!data.start_date) delete data.start_date;
+  if (!data.end_date) delete data.end_date;
+  if (!data.total_budget) delete data.total_budget;
+  
+  const token = localStorage.getItem('auth_token');
+  fetch('/api/projects/' + projectId, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(data)
+  })
+  .then(response => {
+    if (!response.ok) throw new Error('Failed to update project');
+    return response.json();
+  })
+  .then(updatedProject => {
+    showToast('Project updated successfully', 'success');
+    document.getElementById('viewProjectDetailsModal').remove();
+    loadProjects(); // refresh projects list
+  })
+  .catch(error => {
+    console.error('Error updating project:', error);
+    showToast('Error updating project: ' + error.message, 'error');
+  });
 }
 
 /**

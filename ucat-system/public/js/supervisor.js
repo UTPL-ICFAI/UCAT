@@ -183,11 +183,19 @@ async function loadAttendanceWorkers() {
   }
   
   try {
-    const response = await fetch(`/api/workers?project_id=${projectId}`);
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch(`/api/workers?project_id=${projectId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     const workers = await response.json();
-    allWorkers = workers.filter(w => w.supervisor_id === currentUser.id);
+    allWorkers = Array.isArray(workers) ? workers : []; // backend filters by supervisor_id for supervisors
     
     const tbody = document.getElementById('attendanceTableBody');
+    if (allWorkers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:#999;padding:20px;">No workers assigned to you for this project yet.</td></tr>';
+      document.getElementById('attendanceForm').style.display = 'block';
+      return;
+    }
     tbody.innerHTML = allWorkers.map(worker => `
       <tr>
         <td>${worker.name}</td>
@@ -233,9 +241,13 @@ async function submitAttendance() {
   
   showLoading(true);
   try {
+    const token = localStorage.getItem('auth_token');
     const response = await fetch('/api/attendance', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({
         project_id: parseInt(projectId),
         attendance_records: records
