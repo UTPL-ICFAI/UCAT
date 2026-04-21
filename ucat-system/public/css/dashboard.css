@@ -163,6 +163,34 @@
   color: var(--gray-medium);
 }
 
+/* Checkbox Lists */
+.checkbox-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  background: white;
+  border-radius: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--gray-dark);
+}
+
+.help-text {
+  display: block;
+  margin-top: 6px;
+  color: var(--gray-medium);
+  font-size: 12px;
+}
+
 /* Tabs */
 .tabs {
   display: flex;

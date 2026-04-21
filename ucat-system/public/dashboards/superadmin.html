@@ -118,7 +118,7 @@
               <i class="fas fa-play-circle"></i>
             </div>
             <!-- Label container displaying "Active Projects" -->
-            <div class="kpi-label">Active Projects</div>
+            <div class="kpi-label">Ongoing Projects</div>
             <!-- Value container with id for JavaScript to populate -->
             <div class="kpi-value" id="activeProjectsValue">0</div>
           </div>
@@ -347,24 +347,18 @@
             <!-- Site Engineer Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for site engineer select -->
-              <label for="siteEngineerSelect">Site Engineer *</label>
-              <!-- Select dropdown for site engineer with options populated by JS -->
-              <select id="siteEngineerSelect" name="siteEngineerSelect" required>
-                <!-- Default empty option for site engineer -->
-                <option value="">Select Site Engineer</option>
-                <!-- Site engineer options populated by JavaScript -->
-              </select>
+              <label for="siteEngineerSelect">Site Engineers *</label>
+              <!-- Checkbox list for site engineers populated by JS -->
+              <div id="siteEngineerSelect" class="checkbox-list" aria-label="Select Site Engineers"></div>
+              <small class="help-text">Select one or more site engineers.</small>
             </div>
             <!-- Supervisor Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for supervisor select -->
-              <label for="supervisorSelect">Supervisor</label>
-              <!-- Select dropdown for supervisor with options populated by JS -->
-              <select id="supervisorSelect" name="supervisorSelect">
-                <!-- Default empty option for supervisor -->
-                <option value="">Select Supervisor</option>
-                <!-- Supervisor options populated by JavaScript -->
-              </select>
+              <label for="supervisorSelect">Supervisors</label>
+              <!-- Checkbox list for supervisors populated by JS -->
+              <div id="supervisorSelect" class="checkbox-list" aria-label="Select Supervisors"></div>
+              <small class="help-text">Select one or more supervisors.</small>
             </div>
 
             <!-- Template Assignment Section Header -->
@@ -372,13 +366,10 @@
             <!-- Template Selection label and dropdown -->
             <div class="form-group">
               <!-- Label for template select -->
-              <label for="templateSelect">Select Template *</label>
-              <!-- Select dropdown for template selection -->
-              <select id="templateSelect" name="templateSelect" required>
-                <!-- Default empty option for template -->
-                <option value="">Choose a template...</option>
-                <!-- Template options populated by JavaScript -->
-              </select>
+              <label for="templateSelect">Select Templates *</label>
+              <!-- Checkbox list for templates populated by JS -->
+              <div id="templateSelect" class="checkbox-list" aria-label="Select Templates"></div>
+              <small class="help-text">Select one or more templates.</small>
             </div>
             <!-- Template Repetition Type label and dropdown -->
             <div class="form-group">

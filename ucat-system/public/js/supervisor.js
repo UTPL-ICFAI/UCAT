@@ -164,6 +164,9 @@ function displayProjectCards() {
       <p><strong>Location:</strong> ${project.location}</p>
       <p><strong>City:</strong> ${project.city}</p>
       <p><strong>Status:</strong> <span class="badge badge-${project.work_status === 'active' ? 'success' : 'secondary'}">${project.work_status}</span></p>
+      <div style="margin-top: 12px; display: flex; gap: 10px;">
+        <button class="btn" onclick="openProjectChat(${project.id}, '${project.name.replace(/'/g, "\\'")}')">Open Chat</button>
+      </div>
     </div>
   `).join('');
 }

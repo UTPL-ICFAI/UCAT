@@ -44,6 +44,42 @@ let editingUserId = null;
 // Global variable to store the budget chart instance (Chart.js)
 let budgetChart = null;
 
+function getCheckedValues(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(input => parseInt(input.value))
+    .filter(value => !isNaN(value));
+}
+
+function renderCheckboxList(containerId, items, emptyMessage) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `<div class="help-text">${emptyMessage || 'No options available.'}</div>`;
+    return;
+  }
+
+  container.innerHTML = items.map(item => {
+    const inputId = `${containerId}_${item.id}`;
+    return `
+      <label class="checkbox-item" for="${inputId}">
+        <input type="checkbox" id="${inputId}" value="${item.id}" />
+        <span>${item.name}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function clearCheckboxSelections(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll('input[type="checkbox"]').forEach(input => {
+    input.checked = false;
+  });
+}
+
 /**
  * Initialize the application - called on page load
  * Sets up all event listeners, loads data, and prepares UI
@@ -858,14 +894,30 @@ function handleCreateProject(e) {
   const safetyCertifications = document.getElementById('safetyCertifications').value;
   // Get the project manager ID value from the form
   const projectManager = document.getElementById('projectManagerSelect').value;
-  // Get the site engineer ID value from the form
-  const siteEngineer = document.getElementById('siteEngineerSelect').value;
-  // Get the supervisor ID value from the form (optional)
-  const supervisor = document.getElementById('supervisorSelect').value;
+  const projectManagerId = parseInt(projectManager);
+  // Get the site engineer IDs from the checkbox list
+  const siteEngineers = getCheckedValues('siteEngineerSelect');
+  // Get the supervisor IDs from the checkbox list (optional)
+  const supervisors = getCheckedValues('supervisorSelect');
   // Get template assignment details
-  const templateId = document.getElementById('templateSelect').value;
+  const templateIds = getCheckedValues('templateSelect');
   const repetitionType = document.getElementById('repetitionType').value;
   const repetitionDays = document.getElementById('repetitionDays').value;
+  if (!projectManager || isNaN(projectManagerId)) {
+    showToast('Please select a project manager', 'error');
+    return;
+  }
+
+  if (!siteEngineers || siteEngineers.length === 0) {
+    showToast('Please select at least one site engineer', 'error');
+    return;
+  }
+
+  if (!templateIds || templateIds.length === 0) {
+    showToast('Please select at least one template', 'error');
+    return;
+  }
+
   // Get the JWT token from localStorage for authentication
   const token = localStorage.getItem('auth_token');
   // Make API request to create new project with all construction fields
@@ -921,13 +973,12 @@ function handleCreateProject(e) {
         certifications: safetyCertifications
       },
       // Project manager ID
-      projectManagers: [projectManager],
-      // Site engineer ID
-      siteEngineers: [siteEngineer],
-      // Supervisor ID (optional)
-      supervisors: supervisor ? [supervisor] : [],
+      projectManagers: [projectManagerId],
+      // Site engineer IDs
+      siteEngineers: siteEngineers,
+      // Supervisor IDs (optional)
+      supervisors: supervisors,
       // Template assignment details
-      template_id: templateId ? parseInt(templateId) : null,
       repetition_type: repetitionType || null,
       repetition_days: repetitionDays ? repetitionDays.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d)) : []
     })
@@ -941,14 +992,19 @@ function handleCreateProject(e) {
           showToast('Project created successfully', 'success');
           // Clear the form fields
           document.getElementById('createProjectForm').reset();
+          clearCheckboxSelections('siteEngineerSelect');
+          clearCheckboxSelections('supervisorSelect');
+          clearCheckboxSelections('templateSelect');
           // Hide template repetition days input
           document.getElementById('repetitionDaysGroup').style.display = 'none';
           // Reload projects to display the new project immediately
           loadProjects();
           
-          // If template was assigned, set it up for the project
-          if (templateId && data && data.id) {
-            assignTemplateToProject(data.id, templateId, repetitionType, repetitionDays);
+          // If templates were assigned, set them up for the project
+          if (templateIds.length > 0 && data && data.id) {
+            templateIds.forEach(templateId => {
+              assignTemplateToProject(data.id, templateId, repetitionType, repetitionDays);
+            });
           }
         });
       } else {
@@ -973,13 +1029,13 @@ function handleCreateProject(e) {
  */
 function loadTemplatesForDropdown() {
   const token = localStorage.getItem('auth_token');
-  const templateSelect = document.getElementById('templateSelect');
-  
-  if (!templateSelect) {
-    console.warn('Template select dropdown not found');
+  const templateContainer = document.getElementById('templateSelect');
+
+  if (!templateContainer) {
+    console.warn('Template select container not found');
     return;
   }
-  
+
   fetch('/api/templates', {
     method: 'GET',
     headers: {
@@ -993,23 +1049,16 @@ function loadTemplatesForDropdown() {
     .then(data => {
       // Handle both response formats
       const templates = (data.success && data.templates) ? data.templates : (Array.isArray(data) ? data : []);
-      
-      // Clear existing options
-      templateSelect.innerHTML = '<option value="">Choose a template...</option>';
-      
-      // Add all templates as options
-      templates.forEach(template => {
-        const option = document.createElement('option');
-        option.value = template.id;
-        option.textContent = template.name + (template.is_default ? ' (Default)' : '');
-        templateSelect.appendChild(option);
-      });
-      
-      console.log('Templates loaded in dropdown:', templates.length);
+      const items = templates.map(template => ({
+        id: template.id,
+        name: template.name + (template.is_default ? ' (Default)' : '')
+      }));
+      renderCheckboxList('templateSelect', items, 'No templates available.');
+      console.log('Templates loaded in checkbox list:', templates.length);
     })
     .catch(error => {
-      console.error('Error loading templates for dropdown:', error);
-      templateSelect.innerHTML = '<option value="">Error loading templates</option>';
+      console.error('Error loading templates for checkbox list:', error);
+      renderCheckboxList('templateSelect', [], 'Error loading templates.');
     });
 }
 
@@ -1093,36 +1142,10 @@ function loadUsersForDropdowns() {
         // Append the option to the select element
         pmSelect.appendChild(option);
       });
-      // Get the site engineer select element
-      const seSelect = document.getElementById('siteEngineerSelect');
-      // Clear existing options except the default one
-      seSelect.innerHTML = '<option value="">Select Site Engineer</option>';
-      // Loop through site engineers and add as options
-      siteEngineers.forEach(se => {
-        // Create a new option element
-        const option = document.createElement('option');
-        // Set the option value to the user ID
-        option.value = se.id;
-        // Set the option text to the user name
-        option.textContent = se.name;
-        // Append the option to the select element
-        seSelect.appendChild(option);
-      });
-      // Get the supervisor select element
-      const supSelect = document.getElementById('supervisorSelect');
-      // Clear existing options except the default one
-      supSelect.innerHTML = '<option value="">Select Supervisor</option>';
-      // Loop through supervisors and add as options
-      supervisors.forEach(sup => {
-        // Create a new option element
-        const option = document.createElement('option');
-        // Set the option value to the user ID
-        option.value = sup.id;
-        // Set the option text to the user name
-        option.textContent = sup.name;
-        // Append the option to the select element
-        supSelect.appendChild(option);
-      });
+      // Render site engineers checkbox list
+      renderCheckboxList('siteEngineerSelect', siteEngineers, 'No site engineers found.');
+      // Render supervisors checkbox list
+      renderCheckboxList('supervisorSelect', supervisors, 'No supervisors found.');
     })
     // Catch and log any errors from the API request
     .catch(error => console.error('Error loading users for dropdowns:', error));
