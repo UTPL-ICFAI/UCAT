@@ -8,6 +8,18 @@ import { requireRole } from '../middleware/role.js';
 // Create Express router instance
 const router = express.Router();
 
+function parseJson(value, fallback) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return fallback;
+    }
+  }
+  return value;
+}
+
 // ========================================
 // GET /api/project-templates/:projectId - Get all templates for a project
 // ========================================
@@ -23,8 +35,11 @@ router.get('/:projectId', requireRole('superadmin', 'project_manager', 'site_eng
         pt.template_id,
         t.name,
         t.description,
+        t.template_type,
         t.fields,
         t.rows,
+        t.columns,
+        t.row_limit,
         pt.repetition_type,
         pt.repetition_days,
         pt.is_active,
@@ -45,8 +60,11 @@ router.get('/:projectId', requireRole('superadmin', 'project_manager', 'site_eng
           id: row.template_id,
           name: row.name,
           description: row.description,
-          fields: row.fields,
-          rows: row.rows
+          template_type: row.template_type || 'form',
+          fields: parseJson(row.fields, []),
+          rows: parseJson(row.rows, []),
+          columns: parseJson(row.columns, []),
+          row_limit: row.row_limit
         }
       }))
     });
@@ -146,6 +164,49 @@ router.post('/:projectTemplateId/submit', requireRole('site_engineer'), async (r
     }
     
     const { project_id, template_id } = ptResult.rows[0];
+
+    const templateResult = await pool.query(
+      `SELECT id, name, template_type, fields, rows, columns, row_limit
+       FROM templates
+       WHERE id = $1`,
+      [template_id]
+    );
+
+    if (templateResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const templateRow = templateResult.rows[0];
+    const templateSnapshot = {
+      id: templateRow.id,
+      name: templateRow.name,
+      template_type: templateRow.template_type || 'form',
+      fields: parseJson(templateRow.fields, []),
+      rows: parseJson(templateRow.rows, []),
+      columns: parseJson(templateRow.columns, []),
+      row_limit: templateRow.row_limit
+    };
+
+    if (!data || typeof data !== 'object') {
+      return res.status(400).json({ error: 'Submission data is required' });
+    }
+
+    if (templateSnapshot.template_type === 'table') {
+      const rowData = Array.isArray(data.rows) ? data.rows : [];
+      if (rowData.length === 0) {
+        return res.status(400).json({ error: 'Table submissions require at least one row' });
+      }
+      if (templateSnapshot.row_limit && rowData.length > templateSnapshot.row_limit) {
+        return res.status(400).json({ error: 'Row limit exceeded for this template' });
+      }
+    } else {
+      const fieldData = Array.isArray(data.fields) ? data.fields : [];
+      const requiredFields = (templateSnapshot.fields || []).filter(field => field.required);
+      const missing = requiredFields.filter(field => !fieldData.find(item => item.label === field.label && String(item.value || '').trim() !== ''));
+      if (missing.length > 0) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+    }
     
     // Insert daily submission
     const result = await pool.query(`
@@ -155,11 +216,13 @@ router.post('/:projectTemplateId/submit', requireRole('site_engineer'), async (r
         submitted_by,
         submission_date,
         data,
+        template_snapshot,
         status
-      ) VALUES ($1, $2, $3, $4, $5, 'submitted')
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
       ON CONFLICT (project_id, template_id, submission_date)
       DO UPDATE SET
         data = $5,
+        template_snapshot = $6,
         status = 'submitted'
       RETURNING *
     `, [
@@ -167,7 +230,8 @@ router.post('/:projectTemplateId/submit', requireRole('site_engineer'), async (r
       template_id,
       userId,
       submissionDate,
-      JSON.stringify(data)
+      JSON.stringify(data),
+      JSON.stringify(templateSnapshot)
     ]);
     
     res.status(201).json({
@@ -193,10 +257,14 @@ router.get('/:projectId/submissions', requireRole('superadmin', 'project_manager
         ds.project_id,
         ds.template_id,
         t.name as template_name,
+        t.template_type,
+        t.columns,
+        t.row_limit,
         ds.submitted_by,
         u.name as submitted_by_name,
         ds.submission_date,
         ds.data,
+        ds.template_snapshot,
         ds.status,
         ds.reviewed_by,
         ru.name as reviewed_by_name,
@@ -211,7 +279,18 @@ router.get('/:projectId/submissions', requireRole('superadmin', 'project_manager
     
     res.json({
       success: true,
-      data: result.rows
+      data: result.rows.map(row => ({
+        ...row,
+        data: parseJson(row.data, {}),
+        template_snapshot: parseJson(row.template_snapshot, null),
+        template: {
+          id: row.template_id,
+          name: row.template_name,
+          template_type: row.template_type || 'form',
+          columns: parseJson(row.columns, []),
+          row_limit: row.row_limit
+        }
+      }))
     });
   } catch (error) {
     console.error('Error fetching submissions:', error);
@@ -232,12 +311,16 @@ router.get('/submissions/:submissionId', requireRole('superadmin', 'project_mana
         ds.project_id,
         ds.template_id,
         t.name as template_name,
+        t.template_type,
         t.fields,
         t.rows,
+        t.columns,
+        t.row_limit,
         ds.submitted_by,
         u.name as submitted_by_name,
         ds.submission_date,
         ds.data,
+        ds.template_snapshot,
         ds.status,
         ds.reviewed_by,
         ru.name as reviewed_by_name,
@@ -262,14 +345,18 @@ router.get('/submissions/:submissionId', requireRole('superadmin', 'project_mana
         id: row.id,
         project_id: row.project_id,
         template_id: row.template_id,
+        template_snapshot: parseJson(row.template_snapshot, null),
         template: {
           name: row.template_name,
-          fields: row.fields,
-          rows: row.rows
+          template_type: row.template_type || 'form',
+          fields: parseJson(row.fields, []),
+          rows: parseJson(row.rows, []),
+          columns: parseJson(row.columns, []),
+          row_limit: row.row_limit
         },
         submitted_by: row.submitted_by_name,
         submission_date: row.submission_date,
-        data: row.data ? (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) : {},
+        data: parseJson(row.data, {}),
         status: row.status,
         reviewed_by: row.reviewed_by_name,
         review_comment: row.review_comment,

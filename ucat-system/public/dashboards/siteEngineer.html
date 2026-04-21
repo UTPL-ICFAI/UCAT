@@ -100,84 +100,53 @@
 
         <!-- Daily Report Tab -->
         <div id="daily-report-tab" class="tab-content">
-          <div class="card" id="reportFormContainer">
-            <div class="card-header">Daily Progress Report Form</div>
-            <form id="dailyReportForm" style="padding: 20px;">
-              <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                <div class="form-group">
-                  <label>Tunnel Type</label>
-                  <input type="text" name="tunnelType" placeholder="e.g., Underground Excavation" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Tunnel Start Chainage</label>
-                  <input type="text" name="tunnelStartChainage" placeholder="e.g., 197+080" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Tunnel End Chainage</label>
-                  <input type="text" name="tunnelEndChainage" placeholder="e.g., 198+758" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Face Current Chainage</label>
-                  <input type="text" name="faceCurrentChainage" placeholder="e.g., 197+693" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Tunnel Length/SCOPE (m)</label>
-                  <input type="number" name="tunnelLength" step="0.01" placeholder="e.g., 1678" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Steel RDB (No.)</label>
-                  <input type="number" name="steelRDB" step="0.1" placeholder="e.g., 23" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Rock Class</label>
-                  <input type="text" name="rockClass" placeholder="e.g., III" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Lattice Girders (Nos)</label>
-                  <input type="number" name="latticeGirders" step="0.1" placeholder="e.g., 57" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Month Per day (m)</label>
-                  <input type="number" name="monthPerDay" step="0.01" placeholder="e.g., 180.0" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Target Target (m)</label>
-                  <input type="number" name="targetTarget" step="0.01" placeholder="e.g., 180.0" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Today's Progress (m)</label>
-                  <input type="number" name="todaysProgress" step="0.01" placeholder="e.g., 7.0" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Progress for This Month (m)</label>
-                  <input type="number" name="progressThisMonth" step="0.01" placeholder="e.g., 35.0" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Till Last Month (m)</label>
-                  <input type="number" name="tillLastMonth" step="0.01" placeholder="e.g., 578.10" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Total Progress Up To Date (m)</label>
-                  <input type="number" name="totalProgressUpToDate" step="0.01" placeholder="e.g., 613.10" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>Balance (m)</label>
-                  <input type="number" name="balance" step="0.01" placeholder="e.g., 1064.9" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label>% Age Completed</label>
-                  <input type="number" name="percentageCompleted" step="0.01" placeholder="e.g., 36.5" class="form-control">
-                </div>
-                <div class="form-group" style="grid-column: 1 / -1;">
-                  <label>Remarks</label>
-                  <textarea name="remarks" placeholder="Any additional remarks..." class="form-control" rows="3"></textarea>
-                </div>
+          <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">Daily Report Submission</div>
+            <div style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
+              <div class="form-group">
+                <label>Select Project *</label>
+                <select id="submissionProjectSelect" class="form-control">
+                  <option value="">Choose a project...</option>
+                </select>
               </div>
-              <div style="margin-top: 20px; display: flex; gap: 10px;">
-                <button type="submit" class="btn btn-primary">Submit & Convert to Document</button>
-                <button type="reset" class="btn btn-secondary">Clear Form</button>
+              <div class="form-group">
+                <label>Select Template *</label>
+                <select id="submissionTemplateSelect" class="form-control">
+                  <option value="">Choose a template...</option>
+                </select>
               </div>
-            </form>
+              <div class="form-group">
+                <label>Submission Date *</label>
+                <input type="date" id="submissionDate" class="form-control">
+              </div>
+            </div>
+          </div>
+
+          <div class="card" id="templateFormContainer" style="display: none;">
+            <div class="card-header" id="templateFormTitle">Template</div>
+            <form id="dynamicTemplateForm" style="padding: 20px;"></form>
+            <div style="padding: 0 20px 20px; display: flex; gap: 10px;">
+              <button type="submit" form="dynamicTemplateForm" class="btn btn-primary">Submit Report</button>
+              <button type="reset" form="dynamicTemplateForm" class="btn btn-secondary">Clear</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 20px;">
+            <div class="card-header">Submission History</div>
+            <table id="submissionsTable">
+              <thead>
+                <tr>
+                  <th>Template</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th>Submitted</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="submissionsTableBody">
+                <tr><td colspan="5">No submissions yet</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -303,6 +272,17 @@
     </div>
   </div>
 
+  <!-- View Submission Modal -->
+  <div id="viewSubmissionModal" class="modal">
+    <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+      <div class="modal-header">
+        <span id="submissionModalTitle">Submission Detail</span>
+        <button class="modal-close" onclick="closeModal('viewSubmissionModal')">&times;</button>
+      </div>
+      <div style="padding: 20px;" id="submissionModalContent"></div>
+    </div>
+  </div>
+
   <!-- Loading Overlay -->
   <div class="loading-overlay" id="loadingOverlay">
     <div class="loading-content">
@@ -313,5 +293,6 @@
 
   <script src="../js/auth.js"></script>
   <script src="../js/siteEngineer.js"></script>
+  <script src="../js/templateSubmissions.js"></script>
 </body>
 </html>

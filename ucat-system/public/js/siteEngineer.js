@@ -779,9 +779,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const raiseIssueForm = document.getElementById('raiseIssueForm');
   if (raiseIssueForm) raiseIssueForm.addEventListener('submit', handleRaiseIssue);
 
-  const dailyReportForm = document.getElementById('dailyReportForm');
-  if (dailyReportForm) dailyReportForm.addEventListener('submit', handleDailyReportSubmit);
-
   // Project search
   const projectSearch = document.getElementById('projectSearch');
   if (projectSearch) {

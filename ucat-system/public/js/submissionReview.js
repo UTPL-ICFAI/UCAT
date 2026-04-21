@@ -4,6 +4,7 @@
  */
 
 let currentReviewSubmission = null;
+let pmSubmissionsCache = [];
 
 /**
  * Load submissions for current project
@@ -39,6 +40,7 @@ function loadPMSubmissions() {
           submissions = submissions.filter(s => s.submission_date === dateFilter);
         }
         
+        pmSubmissionsCache = submissions;
         renderPMSubmissions(submissions);
         loadTemplatesForFilter();
       }
@@ -97,7 +99,7 @@ function renderPMSubmissions(submissions) {
   tbody.innerHTML = submissions.map(submission => `
     <tr style="background: ${submission.status === 'submitted' ? '#fffbea' : ''};">
       <td>${submission.template?.name || 'N/A'}</td>
-      <td>${submission.submitted_by || 'Unknown'}</td>
+      <td>${submission.submitted_by_name || submission.submitted_by || 'Unknown'}</td>
       <td>${formatDate(submission.submission_date)}</td>
       <td>
         <span class="status-badge status-${submission.status}">
@@ -150,7 +152,7 @@ function renderReviewModal(submission) {
     <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
       <div>
         <p><strong>Template:</strong> ${submission.template?.name || 'N/A'}</p>
-        <p><strong>Submitted By:</strong> ${submission.submitted_by || 'Unknown'}</p>
+        <p><strong>Submitted By:</strong> ${submission.submitted_by_name || submission.submitted_by || 'Unknown'}</p>
         <p><strong>Date:</strong> ${formatDate(submission.submission_date)}</p>
       </div>
       <div>
@@ -161,34 +163,9 @@ function renderReviewModal(submission) {
     </div>
     
     <h4>Submitted Data:</h4>
-    <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; max-height: 400px; overflow-y: auto;">
-      <table style="width: 100%; border-collapse: collapse;">
-        <thead>
-          <tr style="background: #e0e0e0;">
-            <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Field</th>
-            <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Value</th>
-          </tr>
-        </thead>
-        <tbody>
   `;
   
-  // Render submission data as table rows
-  if (submission.data && typeof submission.data === 'object') {
-    Object.entries(submission.data).forEach(([key, value]) => {
-      html += `
-        <tr>
-          <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${key}</td>
-          <td style="padding: 8px; border: 1px solid #ddd;">${value || '-'}</td>
-        </tr>
-      `;
-    });
-  }
-  
-  html += `
-        </tbody>
-      </table>
-    </div>
-  `;
+  html += renderSubmissionData(submission);
   
   if (submission.status !== 'submitted') {
     html += `
@@ -199,6 +176,198 @@ function renderReviewModal(submission) {
   }
   
   contentEl.innerHTML = html;
+}
+
+function renderSubmissionData(submission) {
+  const snapshot = submission.template_snapshot || submission.template || {};
+  const templateType = snapshot.template_type || 'form';
+  const data = submission.data || {};
+
+  if (templateType === 'table' && Array.isArray(data.rows)) {
+    const columns = snapshot.columns || data.columns || [];
+    const header = columns.map(col => `<th style="padding: 10px; text-align: left; border: 1px solid #ddd;">${col}</th>`).join('');
+    const body = data.rows.map(row => `
+      <tr>
+        ${columns.map(col => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ''}</td>`).join('')}
+      </tr>
+    `).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead><tr style="background: #e0e0e0;">${header}</tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  if (Array.isArray(data.fields)) {
+    const rows = data.fields.map(field => `
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label}</td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || '-'}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #e0e0e0;">
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Field</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Value</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  if (Array.isArray(data.rows)) {
+    const rowBlocks = data.rows.map(row => {
+      const cells = Array.isArray(row.cells) ? row.cells : [];
+      const cellRows = cells.map(cell => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cell.label}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${cell.value || '-'}</td>
+        </tr>
+      `).join('');
+
+      return `
+        <div style="margin-bottom: 12px;">
+          <div style="font-weight: 600; margin-bottom: 6px;">${row.label || 'Row'}</div>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tbody>${cellRows}</tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+        ${rowBlocks}
+      </div>
+    `;
+  }
+
+  return `
+    <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+      <pre style="margin: 0;">${JSON.stringify(data, null, 2)}</pre>
+    </div>
+  `;
+}
+
+function exportSubmissionsJson() {
+  if (!pmSubmissionsCache || pmSubmissionsCache.length === 0) {
+    showToast('No submissions to export', 'warning');
+    return;
+  }
+
+  downloadBlob(JSON.stringify(pmSubmissionsCache, null, 2), 'application/json', 'submissions.json');
+}
+
+function exportSubmissionsCsv() {
+  if (!pmSubmissionsCache || pmSubmissionsCache.length === 0) {
+    showToast('No submissions to export', 'warning');
+    return;
+  }
+
+  const tableSubmissions = pmSubmissionsCache.filter(sub => {
+    const snapshot = sub.template_snapshot || sub.template || {};
+    return (snapshot.template_type || 'form') === 'table';
+  });
+
+  if (tableSubmissions.length === 0) {
+    showToast('CSV export is available only for table templates', 'warning');
+    return;
+  }
+
+  const firstSnapshot = tableSubmissions[0].template_snapshot || tableSubmissions[0].template || {};
+  const columns = firstSnapshot.columns || [];
+  if (columns.length === 0) {
+    showToast('No columns found for CSV export', 'warning');
+    return;
+  }
+
+  const mismatched = tableSubmissions.some(sub => {
+    const snapshot = sub.template_snapshot || sub.template || {};
+    const subColumns = snapshot.columns || [];
+    return subColumns.join('|') !== columns.join('|');
+  });
+
+  if (mismatched) {
+    showToast('CSV export requires the same columns across submissions', 'warning');
+    return;
+  }
+
+  const header = ['submission_id', 'submission_date', 'submitted_by', ...columns];
+  const rows = [header];
+
+  tableSubmissions.forEach(sub => {
+    const data = sub.data || {};
+    const rowItems = Array.isArray(data.rows) ? data.rows : [];
+
+    rowItems.forEach(row => {
+      rows.push([
+        sub.id,
+        sub.submission_date,
+        sub.submitted_by_name || sub.submitted_by || '',
+        ...columns.map(col => row[col] || '')
+      ]);
+    });
+  });
+
+  const csv = rows.map(r => r.map(escapeCsv).join(',')).join('\n');
+  downloadBlob(csv, 'text/csv', 'submissions.csv');
+}
+
+function downloadSubmissionJson() {
+  if (!currentReviewSubmission) return;
+  downloadBlob(JSON.stringify(currentReviewSubmission, null, 2), 'application/json', `submission_${currentReviewSubmission.id}.json`);
+}
+
+function downloadSubmissionCsv() {
+  if (!currentReviewSubmission) return;
+
+  const snapshot = currentReviewSubmission.template_snapshot || currentReviewSubmission.template || {};
+  const templateType = snapshot.template_type || 'form';
+  if (templateType !== 'table') {
+    showToast('CSV export is only available for table templates', 'warning');
+    return;
+  }
+
+  const columns = snapshot.columns || [];
+  const rows = [columns];
+  const dataRows = currentReviewSubmission.data?.rows || [];
+
+  dataRows.forEach(row => {
+    rows.push(columns.map(col => row[col] || ''));
+  });
+
+  const csv = rows.map(r => r.map(escapeCsv).join(',')).join('\n');
+  downloadBlob(csv, 'text/csv', `submission_${currentReviewSubmission.id}.csv`);
+}
+
+function escapeCsv(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function downloadBlob(content, contentType, filename) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 /**

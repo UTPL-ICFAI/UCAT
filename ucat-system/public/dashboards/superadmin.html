@@ -888,12 +888,12 @@
               <label style="display: block; font-weight: 700; margin-bottom: 8px; color: #1a5490; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Template Type *</label>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px; transition: all 0.3s;" onmouseover="this.style.borderColor='#1a5490'; this.style.background='#f5f7fa';" onmouseout="this.style.borderColor='#e0e0e0'; this.style.background='white';">
-                  <input type="radio" name="templateType" value="fields" checked onchange="updateTemplateTypeUI()"> 
-                  <span style="font-weight: 600;">Simple Fields</span>
+                  <input type="radio" name="templateType" value="form" checked onchange="updateTemplateTypeUI()"> 
+                  <span style="font-weight: 600;">Form Template</span>
                 </label>
                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px; transition: all 0.3s;" onmouseover="this.style.borderColor='#1a5490'; this.style.background='#f5f7fa';" onmouseout="this.style.borderColor='#e0e0e0'; this.style.background='white';">
-                  <input type="radio" name="templateType" value="rows" onchange="updateTemplateTypeUI()"> 
-                  <span style="font-weight: 600;">Rows & Columns</span>
+                  <input type="radio" name="templateType" value="table" onchange="updateTemplateTypeUI()"> 
+                  <span style="font-weight: 600;">Table Template</span>
                 </label>
               </div>
             </div>
@@ -924,26 +924,23 @@
               </div>
             </div>
 
-            <!-- Rows & Columns Section (hidden by default) -->
-            <div id="rowsColumnsSection" style="display: none;">
+            <!-- Table Columns Section (hidden by default) -->
+            <div id="tableColumnsSection" style="display: none;">
               <div style="margin-bottom: 30px;">
-                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                  <button type="button" onclick="addTemplateRow(); event.stopPropagation();" 
-                    style="background: linear-gradient(135deg, #1a5490, #2e7db1); color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.3s; box-shadow: 0 2px 8px rgba(26, 84, 144, 0.3);"
-                    onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(26, 84, 144, 0.4)';"
-                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(26, 84, 144, 0.3)';">
-                    <i class="fas fa-plus"></i> Add Row
-                  </button>
-                  <button type="button" onclick="addTemplateColumn(); event.stopPropagation();" 
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                  <button type="button" onclick="addTableColumn(); event.stopPropagation();" 
                     style="background: linear-gradient(135deg, #1a5490, #2e7db1); color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.3s; box-shadow: 0 2px 8px rgba(26, 84, 144, 0.3);"
                     onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(26, 84, 144, 0.4)';"
                     onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(26, 84, 144, 0.3)';">
                     <i class="fas fa-plus"></i> Add Column
                   </button>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label for="tableRowLimit" style="font-weight: 600; color: #1a5490; font-size: 12px; text-transform: uppercase;">Row Limit</label>
+                    <input type="number" id="tableRowLimit" min="1" placeholder="Optional" style="width: 120px; padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+                  </div>
                 </div>
-                <!-- Rows container -->
-                <div id="rowsContainer" style="border: 2px solid #e0e0e0; border-radius: 6px; overflow: auto; background: white;">
-                  <!-- Rows will be added here dynamically -->
+                <div id="columnsContainer" style="border: 2px solid #e0e0e0; border-radius: 6px; overflow: hidden; background: white;">
+                  <!-- Columns will be added here dynamically -->
                 </div>
               </div>
             </div>

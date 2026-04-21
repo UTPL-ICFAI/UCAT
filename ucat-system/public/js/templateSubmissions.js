@@ -11,6 +11,17 @@ let currentSubmissionContext = {
   template: null
 };
 
+function normalizeTemplate(template) {
+  const templateType = template.template_type || (template.columns && template.columns.length > 0 ? 'table' : 'form');
+  return {
+    ...template,
+    template_type: templateType,
+    fields: Array.isArray(template.fields) ? template.fields : [],
+    rows: Array.isArray(template.rows) ? template.rows : [],
+    columns: Array.isArray(template.columns) ? template.columns : []
+  };
+}
+
 /**
  * Load projects for submission project select
  */
@@ -24,17 +35,18 @@ function loadProjectsForSubmissions() {
   })
     .then(response => response.json())
     .then(data => {
-      if (data.success && Array.isArray(data.data)) {
-        const select = document.getElementById('submissionProjectSelect');
-        select.innerHTML = '<option value="">Choose a project...</option>';
-        
-        data.data.forEach(project => {
-          const option = document.createElement('option');
-          option.value = project.id;
-          option.textContent = project.name;
-          select.appendChild(option);
-        });
-      }
+      const projects = Array.isArray(data) ? data : (data.success && Array.isArray(data.data) ? data.data : []);
+      const select = document.getElementById('submissionProjectSelect');
+      if (!select) return;
+
+      select.innerHTML = '<option value="">Choose a project...</option>';
+
+      projects.forEach(project => {
+        const option = document.createElement('option');
+        option.value = project.id;
+        option.textContent = project.name;
+        select.appendChild(option);
+      });
     })
     .catch(error => console.error('Error loading projects:', error));
 }
@@ -64,11 +76,12 @@ function loadTemplatesForProject() {
         select.innerHTML = '<option value="">Choose a template...</option>';
         
         data.data.forEach(assignment => {
+          const normalizedTemplate = normalizeTemplate(assignment.template || {});
           const option = document.createElement('option');
           option.value = assignment.template_id;
           option.dataset.projectTemplateId = assignment.id;
-          option.dataset.templateData = JSON.stringify(assignment.template);
-          option.textContent = assignment.template.name;
+          option.dataset.templateData = JSON.stringify(normalizedTemplate);
+          option.textContent = normalizedTemplate.name || 'Template';
           select.appendChild(option);
         });
       }
@@ -116,7 +129,9 @@ function renderTemplateForm() {
   // Build form HTML based on template fields
   let formHTML = '';
   
-  if (template.rows && template.rows.length > 0) {
+  if (template.template_type === 'table') {
+    formHTML = renderTableTemplate(template);
+  } else if (template.rows && template.rows.length > 0) {
     // Render template with rows structure
     formHTML = renderRowBasedTemplate(template);
   } else if (template.fields && template.fields.length > 0) {
@@ -125,6 +140,66 @@ function renderTemplateForm() {
   }
   
   form.innerHTML = formHTML;
+
+  if (template.template_type === 'table') {
+    addTemplateTableRow();
+  }
+}
+
+/**
+ * Render table-based template (columns + rows)
+ */
+function renderTableTemplate(template) {
+  const columns = Array.isArray(template.columns) ? template.columns : [];
+  const rowLimit = template.row_limit || null;
+
+  let html = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <button type="button" class="btn btn-secondary" onclick="addTemplateTableRow()">+ Add Row</button>
+      ${rowLimit ? `<span style="font-size: 12px; color: #666;">Row limit: ${rowLimit}</span>` : ''}
+    </div>
+    <div style="overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
+      <table style="width: 100%; border-collapse: collapse;" id="templateTable">
+        <thead>
+          <tr style="background: #f0f0f0;">
+            ${columns.map(col => `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${col}</th>`).join('')}
+            <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600; font-size: 12px;">Action</th>
+          </tr>
+        </thead>
+        <tbody id="templateTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  return html;
+}
+
+function addTemplateTableRow() {
+  const template = currentSubmissionContext.template;
+  const columns = Array.isArray(template.columns) ? template.columns : [];
+  const rowLimit = template.row_limit || null;
+  const tableBody = document.getElementById('templateTableBody');
+  if (!tableBody) return;
+
+  if (rowLimit && tableBody.children.length >= rowLimit) {
+    showToast('Row limit reached for this template', 'warning');
+    return;
+  }
+
+  const rowIndex = tableBody.children.length;
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    ${columns.map(col => `
+      <td style="padding: 8px; border: 1px solid #ddd;">
+        <input type="text" class="form-control" data-column="${col}" data-row-index="${rowIndex}" />
+      </td>
+    `).join('')}
+    <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">
+      <button type="button" class="btn btn-small btn-danger" onclick="this.closest('tr').remove()">Remove</button>
+    </td>
+  `;
+
+  tableBody.appendChild(row);
 }
 
 /**
@@ -137,7 +212,7 @@ function renderFieldBasedTemplate(template) {
     html += `
       <div class="form-group">
         <label>${field.label}${field.required ? ' *' : ''}</label>
-        ${renderFieldInput(field, index)}
+        ${renderFieldInput(field, index, field.label)}
       </div>
     `;
   });
@@ -166,7 +241,7 @@ function renderRowBasedTemplate(template) {
         html += `
           <div class="form-group">
             <label>${cell}</label>
-            <input type="text" name="${fieldKey}" class="form-control" placeholder="Enter value" />
+            <input type="text" name="${fieldKey}" class="form-control" placeholder="Enter value" data-row-label="${row.label}" data-cell-label="${cell}" />
           </div>
         `;
       });
@@ -198,24 +273,25 @@ function renderRowBasedTemplate(template) {
 /**
  * Render individual field input based on field type
  */
-function renderFieldInput(field, index) {
+function renderFieldInput(field, index, label) {
   const fieldName = `field_${index}`;
   const required = field.required ? 'required' : '';
+  const dataAttr = label ? `data-field-label="${label}"` : '';
   
   switch (field.type) {
     case 'number':
-      return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} />`;
+      return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} ${dataAttr} />`;
     case 'decimal':
-      return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} />`;
+      return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} ${dataAttr} />`;
     case 'date':
-      return `<input type="date" name="${fieldName}" class="form-control" ${required} />`;
+      return `<input type="date" name="${fieldName}" class="form-control" ${required} ${dataAttr} />`;
     case 'textarea':
-      return `<textarea name="${fieldName}" class="form-control" rows="3" ${required}></textarea>`;
+      return `<textarea name="${fieldName}" class="form-control" rows="3" ${required} ${dataAttr}></textarea>`;
     case 'select':
-      return `<select name="${fieldName}" class="form-control" ${required}><option>Select...</option></select>`;
+      return `<select name="${fieldName}" class="form-control" ${required} ${dataAttr}><option>Select...</option></select>`;
     case 'text':
     default:
-      return `<input type="text" name="${fieldName}" class="form-control" ${required} />`;
+      return `<input type="text" name="${fieldName}" class="form-control" ${required} ${dataAttr} />`;
   }
 }
 
@@ -229,13 +305,70 @@ function handleTemplateSubmit(e) {
     showToast('Please select a template first', 'error');
     return;
   }
-  
-  // Collect form data
-  const formData = new FormData(document.getElementById('dynamicTemplateForm'));
+
+  const template = currentSubmissionContext.template;
+  const formEl = document.getElementById('dynamicTemplateForm');
   const data = {};
-  
-  for (let [key, value] of formData.entries()) {
-    data[key] = value;
+
+  if (template.template_type === 'table') {
+    const tableBody = document.getElementById('templateTableBody');
+    const rows = [];
+
+    if (tableBody) {
+      Array.from(tableBody.querySelectorAll('tr')).forEach(row => {
+        const rowData = {};
+        let hasValue = false;
+
+        row.querySelectorAll('input[data-column]').forEach(input => {
+          const column = input.getAttribute('data-column');
+          const value = input.value;
+          rowData[column] = value;
+          if (String(value).trim() !== '') hasValue = true;
+        });
+
+        if (hasValue) rows.push(rowData);
+      });
+    }
+
+    if (rows.length === 0) {
+      showToast('Please add at least one row of data', 'error');
+      return;
+    }
+
+    data.columns = template.columns || [];
+    data.rows = rows;
+  } else {
+    const fields = [];
+    const rows = [];
+    const rowMap = {};
+
+    if (formEl) {
+      formEl.querySelectorAll('[data-field-label]').forEach(input => {
+        fields.push({
+          label: input.getAttribute('data-field-label'),
+          value: input.value
+        });
+      });
+
+      formEl.querySelectorAll('[data-row-label]').forEach(input => {
+        const rowLabel = input.getAttribute('data-row-label');
+        const cellLabel = input.getAttribute('data-cell-label');
+        if (!rowMap[rowLabel]) {
+          rowMap[rowLabel] = { label: rowLabel, cells: [] };
+        }
+        rowMap[rowLabel].cells.push({ label: cellLabel, value: input.value });
+      });
+    }
+
+    Object.values(rowMap).forEach(row => rows.push(row));
+
+    if (fields.length === 0 && rows.length === 0) {
+      showToast('Please fill out the template before submitting', 'error');
+      return;
+    }
+
+    data.fields = fields;
+    data.rows = rows;
   }
   
   // Get submission date
@@ -350,9 +483,8 @@ function viewSubmissionDetail(submissionId) {
         html += '</div>';
         
         // Display submitted data
-        html += '<h4>Submitted Data:</h4><div style="background: #f5f5f5; padding: 15px; border-radius: 6px;"><pre style="margin: 0;">';
-        html += JSON.stringify(submission.data, null, 2);
-        html += '</pre></div>';
+        html += '<h4>Submitted Data:</h4>';
+        html += renderSubmissionData(submission);
         
         modalContent.innerHTML = html;
         document.getElementById('submissionModalTitle').textContent = `${submission.template?.name || 'Submission'} - ${formatDate(submission.submission_date)}`;
@@ -360,6 +492,89 @@ function viewSubmissionDetail(submissionId) {
       }
     })
     .catch(error => console.error('Error loading submission details:', error));
+}
+
+function renderSubmissionData(submission) {
+  const snapshot = submission.template_snapshot || submission.template || {};
+  const templateType = snapshot.template_type || 'form';
+  const data = submission.data || {};
+
+  if (templateType === 'table' && Array.isArray(data.rows)) {
+    const columns = snapshot.columns || data.columns || [];
+    const headerCells = columns.map(col => `<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">${col}</th>`).join('');
+    const bodyRows = data.rows.map(row => `
+      <tr>
+        ${columns.map(col => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ''}</td>`).join('')}
+      </tr>
+    `).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #e0e0e0;">${headerCells}</tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  if (Array.isArray(data.fields)) {
+    const fieldRows = data.fields.map(field => `
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label}</td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || '-'}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #e0e0e0;">
+              <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Field</th>
+              <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Value</th>
+            </tr>
+          </thead>
+          <tbody>${fieldRows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  if (Array.isArray(data.rows)) {
+    const rowBlocks = data.rows.map(row => {
+      const cells = Array.isArray(row.cells) ? row.cells : [];
+      const cellRows = cells.map(cell => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cell.label}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${cell.value || '-'}</td>
+        </tr>
+      `).join('');
+
+      return `
+        <div style="margin-bottom: 12px;">
+          <div style="font-weight: 600; margin-bottom: 6px;">${row.label || 'Row'}</div>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tbody>${cellRows}</tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+        ${rowBlocks}
+      </div>
+    `;
+  }
+
+  return `
+    <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+      <pre style="margin: 0;">${JSON.stringify(data, null, 2)}</pre>
+    </div>
+  `;
 }
 
 /**
@@ -385,6 +600,9 @@ function initTemplateSubmissions() {
   
   if (dateInput) {
     dateInput.addEventListener('change', loadSubmissionHistory);
+    if (!dateInput.value) {
+      dateInput.valueAsDate = new Date();
+    }
   }
   
   if (form) {

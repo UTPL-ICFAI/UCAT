@@ -2061,7 +2061,8 @@ let templateCreationState = {
   fields: [],
   rows: [],
   columns: [],
-  templateType: 'fields'
+  templateType: 'form',
+  rowLimit: null
 };
 
 /**
@@ -2072,14 +2073,15 @@ function updateTemplateTypeUI() {
   templateCreationState.templateType = templateType;
   
   const simpleFieldsSection = document.getElementById('simpleFieldsSection');
-  const rowsColumnsSection = document.getElementById('rowsColumnsSection');
+  const tableColumnsSection = document.getElementById('tableColumnsSection');
   
-  if (templateType === 'fields') {
+  if (templateType === 'form') {
     simpleFieldsSection.style.display = 'block';
-    rowsColumnsSection.style.display = 'none';
+    tableColumnsSection.style.display = 'none';
   } else {
     simpleFieldsSection.style.display = 'none';
-    rowsColumnsSection.style.display = 'block';
+    tableColumnsSection.style.display = 'block';
+    renderColumnsContainer();
   }
   
   updateTemplatePreview();
@@ -2144,6 +2146,72 @@ function renderFieldsContainer() {
           Delete
         </button>
       </div>
+    </div>
+  `).join('');
+}
+
+/**
+ * Add a new column to the table template
+ */
+function addTableColumn() {
+  const columnName = prompt('Enter column name (e.g., Activity, Quantity):');
+  if (!columnName) return;
+
+  templateCreationState.columns.push({
+    id: 'column_' + Date.now(),
+    name: columnName
+  });
+
+  renderColumnsContainer();
+  updateTemplatePreview();
+  showToast(`Column "${columnName}" added`, 'success');
+}
+
+/**
+ * Delete a column from the table template
+ */
+function deleteTableColumn(columnId) {
+  templateCreationState.columns = templateCreationState.columns.filter(col => col.id !== columnId);
+  renderColumnsContainer();
+  updateTemplatePreview();
+  showToast('Column deleted', 'success');
+}
+
+/**
+ * Update column name in table template
+ */
+function updateTableColumnName(columnId, newName) {
+  const column = templateCreationState.columns.find(col => col.id === columnId);
+  if (column) {
+    column.name = newName || 'Column';
+    renderColumnsContainer();
+    updateTemplatePreview();
+  }
+}
+
+/**
+ * Render the table columns container
+ */
+function renderColumnsContainer() {
+  const container = document.getElementById('columnsContainer');
+  if (!container) return;
+
+  if (templateCreationState.columns.length === 0) {
+    container.innerHTML = '<div style="padding: 20px; color: #999; text-align: center;">No columns added yet. Click "Add Column" to create one.</div>';
+    return;
+  }
+
+  container.innerHTML = templateCreationState.columns.map(column => `
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
+      <input type="text" value="${column.name}" placeholder="Column name" 
+        onchange="updateTableColumnName('${column.id}', this.value)"
+        style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+      <button type="button" onclick="deleteTableColumn('${column.id}')" 
+        style="background: #ff6b6b; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s;"
+        onmouseover="this.style.background='#ff5252';"
+        onmouseout="this.style.background='#ff6b6b';">
+        Delete
+      </button>
     </div>
   `).join('');
 }
@@ -2232,6 +2300,7 @@ function updateCellLabel(rowId, cellId, newLabel) {
  */
 function renderRowsContainer() {
   const container = document.getElementById('rowsContainer');
+  if (!container) return;
   
   if (templateCreationState.rows.length === 0) {
     container.innerHTML = '<div style="padding: 20px; color: #999; text-align: center;">No rows added yet. Click "Add Row" to create one.</div>';
@@ -2274,38 +2343,36 @@ function updateTemplatePreview() {
   const preview = document.getElementById('templatePreview');
   const templateType = templateCreationState.templateType;
   
-  if (templateType === 'fields') {
-    if (templateCreationState.fields.length === 0) {
-      preview.innerHTML = '<p style="color: #999; padding: 15px;">Preview will show fields here...</p>';
+  if (templateType === 'form') {
+    if (templateCreationState.fields.length === 0 && templateCreationState.rows.length === 0) {
+      preview.innerHTML = '<p style="color: #999; padding: 15px;">Preview will show form fields here...</p>';
       return;
     }
-    
-    preview.innerHTML = `
-      <div style="padding: 15px;">
-        <table style="width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr style="background: #f0f0f0;">
-              ${templateCreationState.fields.map(field => `
-                <th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${field.label}</th>
-              `).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              ${templateCreationState.fields.map(field => `
-                <td style="padding: 10px; border: 1px solid #ddd; color: #999; font-size: 12px;">Sample ${field.type}...</td>
-              `).join('')}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    `;
-  } else {
-    if (templateCreationState.rows.length === 0) {
-      preview.innerHTML = '<p style="color: #999; padding: 15px;">Preview will show rows here...</p>';
+
+    if (templateCreationState.fields.length > 0) {
+      preview.innerHTML = `
+        <div style="padding: 15px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: #f0f0f0;">
+                ${templateCreationState.fields.map(field => `
+                  <th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${field.label}</th>
+                `).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                ${templateCreationState.fields.map(field => `
+                  <td style="padding: 10px; border: 1px solid #ddd; color: #999; font-size: 12px;">Sample ${field.type}...</td>
+                `).join('')}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
       return;
     }
-    
+
     preview.innerHTML = `
       <div style="overflow-x: auto; padding: 15px;">
         <table style="width: 100%; border-collapse: collapse; border: 1px solid #ddd;">
@@ -2321,7 +2388,34 @@ function updateTemplatePreview() {
         </table>
       </div>
     `;
+    return;
   }
+
+  if (templateCreationState.columns.length === 0) {
+    preview.innerHTML = '<p style="color: #999; padding: 15px;">Preview will show table columns here...</p>';
+    return;
+  }
+
+  preview.innerHTML = `
+    <div style="overflow-x: auto; padding: 15px;">
+      <table style="width: 100%; border-collapse: collapse; border: 1px solid #ddd;">
+        <thead>
+          <tr style="background: #f0f0f0;">
+            ${templateCreationState.columns.map(column => `
+              <th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${column.name}</th>
+            `).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            ${templateCreationState.columns.map(() => `
+              <td style="padding: 10px; border: 1px solid #ddd; color: #999; font-size: 12px;">Row value...</td>
+            `).join('')}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /**
@@ -2339,19 +2433,21 @@ function saveTemplateToDatabase() {
   const isDefault = document.getElementById('isDefaultTemplate').checked;
   const templateType = templateCreationState.templateType;
   const isEditing = templateCreationState.editingTemplateId;
+  const rowLimitRaw = document.getElementById('tableRowLimit') ? document.getElementById('tableRowLimit').value : '';
+  const rowLimit = rowLimitRaw ? parseInt(rowLimitRaw) : null;
   
   if (!templateName) {
     showToast('Please enter a template name', 'error');
     return;
   }
   
-  if (templateType === 'fields' && templateCreationState.fields.length === 0) {
-    showToast('Please add at least one field', 'error');
+  if (templateType === 'form' && templateCreationState.fields.length === 0 && templateCreationState.rows.length === 0) {
+    showToast('Please add at least one field or row', 'error');
     return;
   }
-  
-  if (templateType === 'rows' && templateCreationState.rows.length === 0) {
-    showToast('Please add at least one row', 'error');
+
+  if (templateType === 'table' && templateCreationState.columns.length === 0) {
+    showToast('Please add at least one column', 'error');
     return;
   }
   
@@ -2360,8 +2456,10 @@ function saveTemplateToDatabase() {
     description: templateDescription,
     is_default: isDefault,
     template_type: templateType,
-    fields: templateType === 'fields' ? templateCreationState.fields : [],
-    rows: templateType === 'rows' ? templateCreationState.rows : []
+    fields: templateType === 'form' ? templateCreationState.fields : [],
+    rows: templateType === 'form' ? templateCreationState.rows : [],
+    columns: templateType === 'table' ? templateCreationState.columns.map(column => column.name) : [],
+    row_limit: templateType === 'table' ? rowLimit : null
   };
   
   // Use PUT for updates, POST for new templates
@@ -2388,9 +2486,9 @@ function saveTemplateToDatabase() {
       
       // Reset form
       document.getElementById('createTemplateForm').reset();
-      templateCreationState = { fields: [], rows: [], columns: [], templateType: 'fields' };
+      templateCreationState = { fields: [], rows: [], columns: [], templateType: 'form', rowLimit: null };
       renderFieldsContainer();
-      renderRowsContainer();
+      renderColumnsContainer();
       updateTemplatePreview();
       
       // Change button back to "Save"
@@ -2408,7 +2506,8 @@ function saveTemplateToDatabase() {
     })
     .catch(error => {
       console.error('Error saving template:', error);
-      showToast(`Error saving template: ${error.message || 'Unknown error'}`, 'error');
+      const message = (error && (error.error || error.message)) ? (error.error || error.message) : 'Unknown error';
+      showToast(`Error saving template: ${message}`, 'error');
     });
 }
 
@@ -2454,8 +2553,8 @@ function loadTemplates() {
             </div>
             <p style="margin: 0 0 10px 0; color: #666; font-size: 13px;">${template.description || 'No description'}</p>
             <div style="display: flex; gap: 15px; font-size: 12px; color: #999;">
-              <span><i class="fas fa-layer-group"></i> ${template.rows && template.rows.length > 0 ? template.rows.length + ' rows' : 'Row-based'}</span>
-              <span><i class="fas fa-columns"></i> ${template.fields && template.fields.length > 0 ? template.fields.length + ' fields' : 'Field-based'}</span>
+              <span><i class="fas fa-layer-group"></i> ${template.template_type === 'table' ? 'Table Template' : 'Form Template'}</span>
+              <span><i class="fas fa-columns"></i> ${template.template_type === 'table' ? (template.columns?.length || 0) + ' columns' : (template.fields?.length || 0) + ' fields'}</span>
               <span><i class="fas fa-calendar"></i> ${new Date(template.created_at).toLocaleDateString()}</span>
             </div>
           </div>
@@ -2514,25 +2613,26 @@ function editTemplate(templateId) {
       document.getElementById('templateDescription').value = template.description || '';
       document.getElementById('isDefaultTemplate').checked = template.is_default || false;
       
-      // Determine template type and load data
-      if (template.rows && template.rows.length > 0) {
-        // Rows-based template
-        document.querySelector('input[name="templateType"][value="rows"]').checked = true;
+      const templateType = template.template_type || (template.columns && template.columns.length > 0 ? 'table' : 'form');
+
+      if (templateType === 'table') {
+        document.querySelector('input[name="templateType"][value="table"]').checked = true;
         templateCreationState = {
           fields: [],
-          rows: template.rows || [],
-          columns: [],
-          templateType: 'rows',
+          rows: [],
+          columns: (template.columns || []).map(name => ({ id: 'column_' + Date.now() + '_' + Math.random(), name })),
+          templateType: 'table',
+          rowLimit: template.row_limit || null,
           editingTemplateId: templateId
         };
       } else {
-        // Fields-based template
-        document.querySelector('input[name="templateType"][value="fields"]').checked = true;
+        document.querySelector('input[name="templateType"][value="form"]').checked = true;
         templateCreationState = {
           fields: template.fields || [],
-          rows: [],
+          rows: template.rows || [],
           columns: [],
-          templateType: 'fields',
+          templateType: 'form',
+          rowLimit: null,
           editingTemplateId: templateId
         };
       }
@@ -2540,7 +2640,7 @@ function editTemplate(templateId) {
       // Update UI and preview
       updateTemplateTypeUI();
       renderFieldsContainer();
-      renderRowsContainer();
+      renderColumnsContainer();
       updateTemplatePreview();
       
       // Change button text to "Update" instead of "Save"
@@ -2551,6 +2651,11 @@ function editTemplate(templateId) {
       }
       
       // Open modal
+      const rowLimitInput = document.getElementById('tableRowLimit');
+      if (rowLimitInput) {
+        rowLimitInput.value = templateType === 'table' && template.row_limit ? template.row_limit : '';
+      }
+
       document.getElementById('createTemplateModal').style.display = 'flex';
       showToast(`Editing template: ${template.name}`, 'info');
     })
@@ -2598,9 +2703,13 @@ function deleteTemplate(templateId, templateName) {
  * Open create template modal
  */
 function openCreateTemplateModal() {
-  templateCreationState = { fields: [], rows: [], columns: [], templateType: 'fields' };
+  templateCreationState = { fields: [], rows: [], columns: [], templateType: 'form', rowLimit: null };
+  const formRadio = document.querySelector('input[name="templateType"][value="form"]');
+  if (formRadio) formRadio.checked = true;
   renderFieldsContainer();
-  renderRowsContainer();
+  renderColumnsContainer();
   updateTemplatePreview();
+  const rowLimitInput = document.getElementById('tableRowLimit');
+  if (rowLimitInput) rowLimitInput.value = '';
   document.getElementById('createTemplateModal').style.display = 'flex';
 }

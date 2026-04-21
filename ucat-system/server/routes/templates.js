@@ -27,19 +27,39 @@ const router = express.Router();
  */
 router.post('/', requireRole('site_engineer', 'project_manager', 'supervisor', 'superadmin'), async (req, res) => {
   try {
-    const { name, description, fields, rows, is_default } = req.body;
+    const { name, description, fields, rows, is_default, template_type, columns, row_limit } = req.body;
+    const templateType = template_type || 'form';
 
     // Validate required fields - either fields (simple) or rows (advanced) must be provided
-    if (!name || (!fields || fields.length === 0) && (!rows || rows.length === 0)) {
-      return res.status(400).json({ error: 'Template name and either fields or rows are required' });
+    if (!name) {
+      return res.status(400).json({ error: 'Template name is required' });
+    }
+
+    if (templateType === 'table') {
+      if (!columns || columns.length === 0) {
+        return res.status(400).json({ error: 'Table templates require at least one column' });
+      }
+    } else if ((!fields || fields.length === 0) && (!rows || rows.length === 0)) {
+      return res.status(400).json({ error: 'Form templates require at least one field or row' });
     }
 
     // Store template in database
     const result = await pool.query(
-      `INSERT INTO templates (user_id, name, description, fields, rows, is_default, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, user_id, name, description, fields, rows, is_default, is_active, created_at`,
-      [req.user.id, name, description || null, JSON.stringify(fields || []), JSON.stringify(rows || []), is_default || false, true]
+      `INSERT INTO templates (user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at`,
+      [
+        req.user.id,
+        name,
+        description || null,
+        templateType,
+        JSON.stringify(templateType === 'form' ? (fields || []) : []),
+        JSON.stringify(templateType === 'form' ? (rows || []) : []),
+        JSON.stringify(templateType === 'table' ? (columns || []) : []),
+        row_limit || null,
+        is_default || false,
+        true
+      ]
     );
 
     const template = result.rows[0];
@@ -52,8 +72,11 @@ router.post('/', requireRole('site_engineer', 'project_manager', 'supervisor', '
         user_id: template.user_id,
         name: template.name,
         description: template.description,
+        template_type: template.template_type || 'form',
         fields: typeof template.fields === 'string' ? JSON.parse(template.fields || '[]') : (template.fields || []),
         rows: typeof template.rows === 'string' ? JSON.parse(template.rows || '[]') : (template.rows || []),
+        columns: typeof template.columns === 'string' ? JSON.parse(template.columns || '[]') : (template.columns || []),
+        row_limit: template.row_limit,
         is_default: template.is_default,
         is_active: template.is_active,
         created_at: template.created_at
@@ -78,7 +101,7 @@ router.post('/', requireRole('site_engineer', 'project_manager', 'supervisor', '
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, user_id, name, description, fields, rows, is_default, is_active, created_at
+      `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at
        FROM templates
        WHERE is_active = true
        ORDER BY created_at DESC`
@@ -89,8 +112,11 @@ router.get('/', async (req, res) => {
       user_id: t.user_id,
       name: t.name,
       description: t.description,
+      template_type: t.template_type || 'form',
       fields: typeof t.fields === 'string' ? JSON.parse(t.fields) : t.fields || [],
       rows: typeof t.rows === 'string' ? JSON.parse(t.rows) : t.rows || [],
+      columns: typeof t.columns === 'string' ? JSON.parse(t.columns) : t.columns || [],
+      row_limit: t.row_limit,
       is_default: t.is_default,
       is_active: t.is_active,
       created_at: t.created_at
@@ -265,20 +291,46 @@ router.post('/:templateId/submit', async (req, res) => {
 router.put('/:templateId', requireRole('site_engineer', 'project_manager', 'supervisor', 'superadmin'), async (req, res) => {
   try {
     const { templateId } = req.params;
-    const { name, description, fields, rows, is_default } = req.body;
+    const { name, description, fields, rows, is_default, template_type, columns, row_limit } = req.body;
+    const templateType = template_type || 'form';
 
     // Validate required fields
-    if (!name || (!fields || fields.length === 0) && (!rows || rows.length === 0)) {
-      return res.status(400).json({ error: 'Template name and either fields or rows are required' });
+    if (!name) {
+      return res.status(400).json({ error: 'Template name is required' });
+    }
+
+    if (templateType === 'table') {
+      if (!columns || columns.length === 0) {
+        return res.status(400).json({ error: 'Table templates require at least one column' });
+      }
+    } else if ((!fields || fields.length === 0) && (!rows || rows.length === 0)) {
+      return res.status(400).json({ error: 'Form templates require at least one field or row' });
     }
 
     // Update template in database
     const result = await pool.query(
       `UPDATE templates 
-       SET name = $1, description = $2, fields = $3, rows = $4, is_default = $5
-       WHERE id = $6
-       RETURNING id, user_id, name, description, fields, rows, is_default, is_active, created_at`,
-      [name, description || null, JSON.stringify(fields || []), JSON.stringify(rows || []), is_default || false, templateId]
+       SET name = $1,
+           description = $2,
+           template_type = $3,
+           fields = $4,
+           rows = $5,
+           columns = $6,
+           row_limit = $7,
+           is_default = $8
+       WHERE id = $9
+       RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at`,
+      [
+        name,
+        description || null,
+        templateType,
+        JSON.stringify(templateType === 'form' ? (fields || []) : []),
+        JSON.stringify(templateType === 'form' ? (rows || []) : []),
+        JSON.stringify(templateType === 'table' ? (columns || []) : []),
+        row_limit || null,
+        is_default || false,
+        templateId
+      ]
     );
 
     if (result.rows.length === 0) {
@@ -295,8 +347,11 @@ router.put('/:templateId', requireRole('site_engineer', 'project_manager', 'supe
         user_id: template.user_id,
         name: template.name,
         description: template.description,
+        template_type: template.template_type || 'form',
         fields: typeof template.fields === 'string' ? JSON.parse(template.fields || '[]') : (template.fields || []),
         rows: typeof template.rows === 'string' ? JSON.parse(template.rows || '[]') : (template.rows || []),
+        columns: typeof template.columns === 'string' ? JSON.parse(template.columns || '[]') : (template.columns || []),
+        row_limit: template.row_limit,
         is_default: template.is_default,
         is_active: template.is_active,
         created_at: template.created_at
