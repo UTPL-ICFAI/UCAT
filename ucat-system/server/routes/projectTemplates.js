@@ -1,16 +1,74 @@
-// Import Express framework for routing
-import express from 'express';
-// Import database connection pool
-import pool from '../db.js';
-// Import role-based access control middleware
-import { requireRole } from '../middleware/role.js';
+import express from "express";
+import xlsx from "xlsx";
+import pool from "../db.js";
+import { requireRole } from "../middleware/role.js";
 
-// Create Express router instance
 const router = express.Router();
+
+let templateSchemaEnsured = false;
+let templateSchemaEnsuringPromise = null;
+let submissionSchemaEnsured = false;
+let submissionSchemaEnsuringPromise = null;
+
+async function ensureTemplateTableCompatibility() {
+  if (templateSchemaEnsured) return;
+  if (templateSchemaEnsuringPromise) {
+    await templateSchemaEnsuringPromise;
+    return;
+  }
+
+  // FIX: Hotfix - keep project-template APIs compatible with older DB schemas.
+  templateSchemaEnsuringPromise = pool.query(`
+    ALTER TABLE templates
+      ADD COLUMN IF NOT EXISTS template_type VARCHAR(20) NOT NULL DEFAULT 'form',
+      ADD COLUMN IF NOT EXISTS columns JSONB DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS row_limit INTEGER,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+  `);
+
+  try {
+    await templateSchemaEnsuringPromise;
+    templateSchemaEnsured = true;
+  } finally {
+    templateSchemaEnsuringPromise = null;
+  }
+}
+
+async function ensureSubmissionTableCompatibility() {
+  if (submissionSchemaEnsured) return;
+  if (submissionSchemaEnsuringPromise) {
+    await submissionSchemaEnsuringPromise;
+    return;
+  }
+
+  // Keep daily_submissions compatible with deployments created before template_snapshot existed.
+  submissionSchemaEnsuringPromise = pool.query(`
+    ALTER TABLE daily_submissions
+      ADD COLUMN IF NOT EXISTS template_snapshot JSONB NOT NULL DEFAULT '{}';
+  `);
+
+  try {
+    await submissionSchemaEnsuringPromise;
+    submissionSchemaEnsured = true;
+  } finally {
+    submissionSchemaEnsuringPromise = null;
+  }
+}
+
+router.use(async (req, res, next) => {
+  try {
+    await ensureTemplateTableCompatibility();
+    await ensureSubmissionTableCompatibility();
+    next();
+  } catch (error) {
+    console.error("Template schema compatibility check failed:", error);
+    next(error);
+  }
+});
 
 function parseJson(value, fallback) {
   if (value === null || value === undefined) return fallback;
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     try {
       return JSON.parse(value);
     } catch (error) {
@@ -20,422 +78,934 @@ function parseJson(value, fallback) {
   return value;
 }
 
-// ========================================
-// GET /api/project-templates/:projectId - Get all templates for a project
-// ========================================
-router.get('/:projectId', requireRole('superadmin', 'project_manager', 'site_engineer'), async (req, res) => {
-  try {
-    const { projectId } = req.params;
-    
-    // Get all templates assigned to this project
-    const result = await pool.query(`
-      SELECT 
-        pt.id,
-        pt.project_id,
-        pt.template_id,
-        t.name,
-        t.description,
-        t.template_type,
-        t.fields,
-        t.rows,
-        t.columns,
-        t.row_limit,
-        pt.repetition_type,
-        pt.repetition_days,
-        pt.is_active,
-        pt.assigned_at,
-        u.name as assigned_by_name
-      FROM project_templates pt
-      JOIN templates t ON pt.template_id = t.id
-      JOIN users u ON pt.assigned_by = u.id
-      WHERE pt.project_id = $1 AND pt.is_active = true
-      ORDER BY pt.assigned_at DESC
-    `, [projectId]);
-    
-    res.json({
-      success: true,
-      data: result.rows.map(row => ({
-        ...row,
-        template: {
-          id: row.template_id,
-          name: row.name,
-          description: row.description,
-          template_type: row.template_type || 'form',
-          fields: parseJson(row.fields, []),
-          rows: parseJson(row.rows, []),
-          columns: parseJson(row.columns, []),
-          row_limit: row.row_limit
-        }
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching project templates:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch templates' });
+function normalizeRepetitionDays(input) {
+  if (Array.isArray(input)) return input;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      return trimmed
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean);
+    }
   }
-});
+  return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+}
 
-// ========================================
-// POST /api/project-templates - Assign template to project
-// ========================================
-router.post('/', requireRole('superadmin'), async (req, res) => {
+function extractSubmissionValues(data, templateSnapshot) {
+  const valuesByName = new Map();
+  const valuesByLabel = new Map();
+
+  if (Array.isArray(data?.fields)) {
+    data.fields.forEach((entry) => {
+      const entryLabel = (entry.label || "").toString().trim();
+      const entryName = (entry.name || "").toString().trim();
+      const entryValue = entry.value;
+      if (entryName) valuesByName.set(entryName.toLowerCase(), entryValue);
+      if (entryLabel) valuesByLabel.set(entryLabel.toLowerCase(), entryValue);
+    });
+  }
+
+  if (Array.isArray(data?.rows)) {
+    data.rows.forEach((row) => {
+      if (Array.isArray(row?.cells)) {
+        row.cells.forEach((cell) => {
+          const cellLabel = (cell.label || "").toString().trim();
+          const cellName = (cell.name || "").toString().trim();
+          const cellValue = cell.value;
+          if (cellName) valuesByName.set(cellName.toLowerCase(), cellValue);
+          if (cellLabel) valuesByLabel.set(cellLabel.toLowerCase(), cellValue);
+        });
+      }
+    });
+  }
+
+  const missing = [];
+  const requiredFields = (templateSnapshot.fields || []).filter(
+    (f) => !!f.required,
+  );
+
+  requiredFields.forEach((field) => {
+    const byName = valuesByName.get((field.name || "").toLowerCase());
+    const byLabel = valuesByLabel.get((field.label || "").toLowerCase());
+    const value = byName !== undefined ? byName : byLabel;
+    if (value === undefined || value === null || String(value).trim() === "") {
+      missing.push(field.label || field.name || "Field");
+    }
+  });
+
+  (templateSnapshot.rows || []).forEach((row) => {
+    (row.cells || []).forEach((cell) => {
+      if (!cell || !cell.required) return;
+      const byName = valuesByName.get((cell.name || "").toLowerCase());
+      const byLabel = valuesByLabel.get((cell.label || "").toLowerCase());
+      const value = byName !== undefined ? byName : byLabel;
+      if (
+        value === undefined ||
+        value === null ||
+        String(value).trim() === ""
+      ) {
+        missing.push(cell.label || cell.name || "Cell");
+      }
+    });
+  });
+
+  return missing;
+}
+
+function buildSingleSubmissionWorkbookRowType(sheetData, submission) {
+  const data = parseJson(submission.data, {});
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+
+  rows.forEach((row) => {
+    sheetData.push([row.label || "Row"]);
+    const cells = Array.isArray(row.cells) ? row.cells : [];
+    cells.forEach((cell) => {
+      const cellLabel =
+        typeof cell === "object" ? cell.label || "Cell" : String(cell);
+      const cellValue = typeof cell === "object" ? cell.value || "" : "";
+      sheetData.push([cellLabel, cellValue]);
+    });
+    sheetData.push([]);
+  });
+}
+
+function buildSingleSubmissionWorkbookTableType(sheetData, submission) {
+  const snapshot = parseJson(submission.template_snapshot, {});
+  const data = parseJson(submission.data, {});
+  const columns =
+    Array.isArray(snapshot.columns) && snapshot.columns.length > 0
+      ? snapshot.columns
+      : Array.isArray(data.columns)
+        ? data.columns
+        : [];
+
+  if (columns.length > 0) {
+    sheetData.push(columns);
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    rows.forEach((row) => {
+      sheetData.push(columns.map((col) => row[col] || ""));
+    });
+  }
+}
+
+function buildSingleSubmissionWorkbookFormType(sheetData, submission) {
+  const data = parseJson(submission.data, {});
+  sheetData.push(["Field", "Value"]);
+
+  if (Array.isArray(data.fields) && data.fields.length > 0) {
+    data.fields.forEach((field) => {
+      sheetData.push([field.label || field.name || "Field", field.value || ""]);
+    });
+  } else if (typeof data === "object") {
+    Object.keys(data).forEach((key) => {
+      sheetData.push([key, data[key]]);
+    });
+  }
+}
+
+function toCsvRow(values) {
+  return values
+    .map((value) => {
+      const str = value === null || value === undefined ? "" : String(value);
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    })
+    .join(",");
+}
+
+router.get(
+  "/:projectId",
+  requireRole("superadmin", "project_manager", "site_engineer"),
+  async (req, res) => {
+    try {
+      const { projectId } = req.params;
+
+      const result = await pool.query(
+        `SELECT
+         pt.id,
+         pt.project_id,
+         pt.template_id,
+         t.name,
+         t.description,
+         t.template_type,
+         t.fields,
+         t.rows,
+         t.columns,
+         t.row_limit,
+         pt.repetition_type,
+         pt.repetition_days,
+         pt.is_active,
+         pt.assigned_at,
+         u.name as assigned_by_name
+       FROM project_templates pt
+       JOIN templates t ON pt.template_id = t.id
+       LEFT JOIN users u ON pt.assigned_by = u.id
+       WHERE pt.project_id = $1 AND pt.is_active = true
+       ORDER BY pt.assigned_at DESC`,
+        [projectId],
+      );
+
+      res.json({
+        success: true,
+        data: result.rows.map((row) => ({
+          ...row,
+          repetition_days: parseJson(row.repetition_days, []),
+          template: {
+            id: row.template_id,
+            name: row.name,
+            description: row.description,
+            template_type: row.template_type || "form",
+            fields: parseJson(row.fields, []),
+            rows: parseJson(row.rows, []),
+            columns: parseJson(row.columns, []),
+            row_limit: row.row_limit,
+          },
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching project templates:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to fetch templates" });
+    }
+  },
+);
+
+router.post("/", requireRole("superadmin"), async (req, res) => {
   try {
-    const { projectId, templateId, repetitionType = 'daily', repetitionDays } = req.body;
+    const projectId = req.body.projectId || req.body.project_id;
+    const templateId = req.body.templateId || req.body.template_id;
+    const repetitionType =
+      req.body.repetitionType || req.body.repetition_type || "daily";
+    const repetitionDays = normalizeRepetitionDays(
+      req.body.repetitionDays || req.body.repetition_days,
+    );
     const userId = req.user.id;
-    
-    // Validate inputs
+
     if (!projectId || !templateId) {
-      return res.status(400).json({ error: 'Project ID and Template ID required' });
+      return res
+        .status(400)
+        .json({ error: "Project ID and Template ID required" });
     }
-    
-    // Insert project template assignment
-    const result = await pool.query(`
-      INSERT INTO project_templates (
-        project_id, 
-        template_id, 
-        assigned_by, 
-        repetition_type, 
-        repetition_days,
-        is_active
-      ) VALUES ($1, $2, $3, $4, $5, true)
-      ON CONFLICT (project_id, template_id) 
-      DO UPDATE SET 
-        is_active = true,
-        repetition_type = $4,
-        repetition_days = $5
-      RETURNING *
-    `, [
-      projectId, 
-      templateId, 
-      userId, 
-      repetitionType,
-      JSON.stringify(repetitionDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-    ]);
-    
-    res.status(201).json({
-      success: true,
-      projectTemplate: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Error assigning template to project:', error);
-    res.status(500).json({ success: false, error: 'Failed to assign template' });
-  }
-});
 
-// ========================================
-// DELETE /api/project-templates/:projectTemplateId - Remove template from project
-// ========================================
-router.delete('/:projectTemplateId', requireRole('superadmin'), async (req, res) => {
-  try {
-    const { projectTemplateId } = req.params;
-    
-    // Mark as inactive instead of deleting
-    await pool.query(`
-      UPDATE project_templates 
-      SET is_active = false 
-      WHERE id = $1
-    `, [projectTemplateId]);
-    
-    res.json({
-      success: true,
-      message: 'Template removed from project'
-    });
-  } catch (error) {
-    console.error('Error removing template:', error);
-    res.status(500).json({ success: false, error: 'Failed to remove template' });
-  }
-});
-
-// ========================================
-// POST /api/project-templates/submit - Site engineer submits filled template
-// ========================================
-router.post('/:projectTemplateId/submit', requireRole('site_engineer'), async (req, res) => {
-  try {
-    const { projectTemplateId } = req.params;
-    const { data, submissionDate } = req.body;
-    const userId = req.user.id;
-    
-    // Get project template details
-    const ptResult = await pool.query(`
-      SELECT project_id, template_id FROM project_templates WHERE id = $1
-    `, [projectTemplateId]);
-    
-    if (ptResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Project template not found' });
-    }
-    
-    const { project_id, template_id } = ptResult.rows[0];
-
-    const templateResult = await pool.query(
-      `SELECT id, name, template_type, fields, rows, columns, row_limit
-       FROM templates
-       WHERE id = $1`,
-      [template_id]
+    const result = await pool.query(
+      `INSERT INTO project_templates (project_id, template_id, assigned_by, repetition_type, repetition_days, is_active)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT (project_id, template_id)
+       DO UPDATE SET
+         is_active = true,
+         assigned_by = EXCLUDED.assigned_by,
+         repetition_type = EXCLUDED.repetition_type,
+         repetition_days = EXCLUDED.repetition_days,
+         assigned_at = NOW()
+       RETURNING *`,
+      [
+        projectId,
+        templateId,
+        userId,
+        repetitionType,
+        JSON.stringify(repetitionDays),
+      ],
     );
 
-    if (templateResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Template not found' });
-    }
-
-    const templateRow = templateResult.rows[0];
-    const templateSnapshot = {
-      id: templateRow.id,
-      name: templateRow.name,
-      template_type: templateRow.template_type || 'form',
-      fields: parseJson(templateRow.fields, []),
-      rows: parseJson(templateRow.rows, []),
-      columns: parseJson(templateRow.columns, []),
-      row_limit: templateRow.row_limit
-    };
-
-    if (!data || typeof data !== 'object') {
-      return res.status(400).json({ error: 'Submission data is required' });
-    }
-
-    if (templateSnapshot.template_type === 'table') {
-      const rowData = Array.isArray(data.rows) ? data.rows : [];
-      if (rowData.length === 0) {
-        return res.status(400).json({ error: 'Table submissions require at least one row' });
-      }
-      if (templateSnapshot.row_limit && rowData.length > templateSnapshot.row_limit) {
-        return res.status(400).json({ error: 'Row limit exceeded for this template' });
-      }
-    } else {
-      const fieldData = Array.isArray(data.fields) ? data.fields : [];
-      const requiredFields = (templateSnapshot.fields || []).filter(field => field.required);
-      const missing = requiredFields.filter(field => !fieldData.find(item => item.label === field.label && String(item.value || '').trim() !== ''));
-      if (missing.length > 0) {
-        return res.status(400).json({ error: 'Missing required fields' });
-      }
-    }
-    
-    // Insert daily submission
-    const result = await pool.query(`
-      INSERT INTO daily_submissions (
-        project_id,
-        template_id,
-        submitted_by,
-        submission_date,
-        data,
-        template_snapshot,
-        status
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
-      ON CONFLICT (project_id, template_id, submission_date)
-      DO UPDATE SET
-        data = $5,
-        template_snapshot = $6,
-        status = 'submitted'
-      RETURNING *
-    `, [
-      project_id,
-      template_id,
-      userId,
-      submissionDate,
-      JSON.stringify(data),
-      JSON.stringify(templateSnapshot)
-    ]);
-    
-    res.status(201).json({
-      success: true,
-      submission: result.rows[0]
-    });
+    res.status(201).json({ success: true, projectTemplate: result.rows[0] });
   } catch (error) {
-    console.error('Error submitting template:', error);
-    res.status(500).json({ success: false, error: 'Failed to submit template' });
+    console.error("Error assigning template to project:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to assign template" });
   }
 });
 
-// ========================================
-// GET /api/project-templates/:projectId/submissions - Get all submissions for project
-// ========================================
-router.get('/:projectId/submissions', requireRole('superadmin', 'project_manager', 'site_engineer'), async (req, res) => {
-  try {
-    const { projectId } = req.params;
-    
-    const result = await pool.query(`
-      SELECT 
-        ds.id,
-        ds.project_id,
-        ds.template_id,
-        t.name as template_name,
-        t.template_type,
-        t.columns,
-        t.row_limit,
-        ds.submitted_by,
-        u.name as submitted_by_name,
-        ds.submission_date,
-        ds.data,
-        ds.template_snapshot,
-        ds.status,
-        ds.reviewed_by,
-        ru.name as reviewed_by_name,
-        ds.reviewed_at
-      FROM daily_submissions ds
-      JOIN templates t ON ds.template_id = t.id
-      JOIN users u ON ds.submitted_by = u.id
-      LEFT JOIN users ru ON ds.reviewed_by = ru.id
-      WHERE ds.project_id = $1
-      ORDER BY ds.submission_date DESC, ds.created_at DESC
-    `, [projectId]);
-    
-    res.json({
-      success: true,
-      data: result.rows.map(row => ({
-        ...row,
-        data: parseJson(row.data, {}),
-        template_snapshot: parseJson(row.template_snapshot, null),
-        template: {
-          id: row.template_id,
-          name: row.template_name,
-          template_type: row.template_type || 'form',
-          columns: parseJson(row.columns, []),
-          row_limit: row.row_limit
+router.delete(
+  "/:projectTemplateId",
+  requireRole("superadmin"),
+  async (req, res) => {
+    try {
+      const { projectTemplateId } = req.params;
+
+      const result = await pool.query(
+        `UPDATE project_templates
+       SET is_active = false
+       WHERE id = $1
+       RETURNING id`,
+        [projectTemplateId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Project template not found" });
+      }
+
+      res.json({ success: true, message: "Template removed from project" });
+    } catch (error) {
+      console.error("Error removing template:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to remove template" });
+    }
+  },
+);
+
+// FIX: Bug1 - Keep project submission list route and use singular /submission/:id for single-item actions.
+router.get(
+  "/:projectId/submissions",
+  requireRole("superadmin", "project_manager", "site_engineer"),
+  async (req, res) => {
+    try {
+      const { projectId } = req.params;
+
+      const result = await pool.query(
+        `SELECT
+         ds.id,
+         ds.project_id,
+         ds.template_id,
+         t.name as template_name,
+         t.template_type,
+         t.columns,
+         t.row_limit,
+         ds.submitted_by,
+         u.name as submitted_by_name,
+         ds.submission_date,
+         ds.data,
+         ds.template_snapshot,
+         ds.status,
+         ds.reviewed_by,
+         ru.name as reviewed_by_name,
+         ds.review_comment,
+         ds.reviewed_at,
+         ds.created_at
+       FROM daily_submissions ds
+       JOIN templates t ON ds.template_id = t.id
+       JOIN users u ON ds.submitted_by = u.id
+       LEFT JOIN users ru ON ds.reviewed_by = ru.id
+       WHERE ds.project_id = $1
+       ORDER BY ds.submission_date DESC, ds.created_at DESC`,
+        [projectId],
+      );
+
+      res.json({
+        success: true,
+        data: result.rows.map((row) => ({
+          ...row,
+          data: parseJson(row.data, {}),
+          template_snapshot: parseJson(row.template_snapshot, null),
+          template: {
+            id: row.template_id,
+            name: row.template_name,
+            template_type: row.template_type || "form",
+            columns: parseJson(row.columns, []),
+            row_limit: row.row_limit,
+          },
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching submissions:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to fetch submissions" });
+    }
+  },
+);
+
+// FIX: Feature6 - Export all approved submissions for a project in xlsx/csv.
+router.get(
+  "/:projectId/submissions/export",
+  requireRole("project_manager", "superadmin"),
+  async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const format = (req.query.format || "xlsx").toString().toLowerCase();
+
+      const rowsResult = await pool.query(
+        `SELECT
+         ds.id,
+         ds.project_id,
+         ds.template_id,
+         ds.submission_date,
+         ds.data,
+         ds.template_snapshot,
+         ds.status,
+         t.name as template_name,
+         t.template_type,
+         p.name as project_name,
+         u.name as submitted_by_name
+       FROM daily_submissions ds
+       JOIN templates t ON t.id = ds.template_id
+       JOIN projects p ON p.id = ds.project_id
+       JOIN users u ON u.id = ds.submitted_by
+       WHERE ds.project_id = $1 AND ds.status = 'approved'
+       ORDER BY t.name, ds.submission_date ASC`,
+        [projectId],
+      );
+
+      if (rowsResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: "No approved submissions found for export",
+        });
+      }
+
+      const grouped = new Map();
+      rowsResult.rows.forEach((row) => {
+        const key = `${row.template_id}::${row.template_name}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(row);
+      });
+
+      if (format === "csv") {
+        const csvLines = [];
+        grouped.forEach((items, key) => {
+          const first = items[0];
+          csvLines.push(`# ${first.template_name}`);
+
+          const snapshot = parseJson(first.template_snapshot, {});
+          const type = snapshot.template_type || first.template_type || "form";
+
+          if (type === "table") {
+            const columns = Array.isArray(snapshot.columns)
+              ? snapshot.columns
+              : [];
+            csvLines.push(
+              toCsvRow([
+                "submission_id",
+                "submission_date",
+                "submitted_by",
+                ...columns,
+              ]),
+            );
+            items.forEach((item) => {
+              const data = parseJson(item.data, {});
+              const rows = Array.isArray(data.rows) ? data.rows : [];
+              rows.forEach((r) => {
+                csvLines.push(
+                  toCsvRow([
+                    item.id,
+                    item.submission_date,
+                    item.submitted_by_name,
+                    ...columns.map((c) => r[c] || ""),
+                  ]),
+                );
+              });
+            });
+          } else {
+            csvLines.push(
+              toCsvRow([
+                "submission_id",
+                "submission_date",
+                "submitted_by",
+                "field",
+                "value",
+              ]),
+            );
+            items.forEach((item) => {
+              const data = parseJson(item.data, {});
+              const fields = Array.isArray(data.fields) ? data.fields : [];
+              fields.forEach((f) => {
+                csvLines.push(
+                  toCsvRow([
+                    item.id,
+                    item.submission_date,
+                    item.submitted_by_name,
+                    f.label || f.name || "Field",
+                    f.value || "",
+                  ]),
+                );
+              });
+            });
+          }
+
+          csvLines.push("");
+        });
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="project-${projectId}-submissions.csv"`,
+        );
+        return res.send(csvLines.join("\n"));
+      }
+
+      const workbook = xlsx.utils.book_new();
+
+      grouped.forEach((items) => {
+        const first = items[0];
+        const snapshot = parseJson(first.template_snapshot, {});
+        const type = snapshot.template_type || first.template_type || "form";
+        const sheetData = [];
+
+        sheetData.push(["Project", first.project_name]);
+        sheetData.push(["Template", first.template_name]);
+        sheetData.push(["Exported At", new Date().toISOString()]);
+        sheetData.push([]);
+
+        if (type === "table") {
+          const columns = Array.isArray(snapshot.columns)
+            ? snapshot.columns
+            : [];
+          sheetData.push([
+            "Submission ID",
+            "Submission Date",
+            "Submitted By",
+            ...columns,
+          ]);
+          items.forEach((item) => {
+            const data = parseJson(item.data, {});
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            rows.forEach((r) => {
+              sheetData.push([
+                item.id,
+                item.submission_date,
+                item.submitted_by_name,
+                ...columns.map((c) => r[c] || ""),
+              ]);
+            });
+          });
+        } else if (type === "row") {
+          sheetData.push([
+            "Submission ID",
+            "Submission Date",
+            "Submitted By",
+            "Group",
+            "Cell",
+            "Value",
+          ]);
+          items.forEach((item) => {
+            const data = parseJson(item.data, {});
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            rows.forEach((r) => {
+              const cells = Array.isArray(r.cells) ? r.cells : [];
+              cells.forEach((cell) => {
+                const cellLabel =
+                  typeof cell === "object"
+                    ? cell.label || "Cell"
+                    : String(cell);
+                const cellValue =
+                  typeof cell === "object" ? cell.value || "" : "";
+                sheetData.push([
+                  item.id,
+                  item.submission_date,
+                  item.submitted_by_name,
+                  r.label || "Row",
+                  cellLabel,
+                  cellValue,
+                ]);
+              });
+            });
+          });
+        } else {
+          sheetData.push([
+            "Submission ID",
+            "Submission Date",
+            "Submitted By",
+            "Field",
+            "Value",
+          ]);
+          items.forEach((item) => {
+            const data = parseJson(item.data, {});
+            const fields = Array.isArray(data.fields) ? data.fields : [];
+            fields.forEach((f) => {
+              sheetData.push([
+                item.id,
+                item.submission_date,
+                item.submitted_by_name,
+                f.label || f.name || "Field",
+                f.value || "",
+              ]);
+            });
+          });
         }
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching submissions:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch submissions' });
-  }
-});
 
-// ========================================
-// GET /api/project-templates/submissions/:submissionId - Get single submission details
-// ========================================
-router.get('/submissions/:submissionId', requireRole('superadmin', 'project_manager', 'site_engineer'), async (req, res) => {
-  try {
-    const { submissionId } = req.params;
-    
-    const result = await pool.query(`
-      SELECT 
-        ds.id,
-        ds.project_id,
-        ds.template_id,
-        t.name as template_name,
-        t.template_type,
-        t.fields,
-        t.rows,
-        t.columns,
-        t.row_limit,
-        ds.submitted_by,
-        u.name as submitted_by_name,
-        ds.submission_date,
-        ds.data,
-        ds.template_snapshot,
-        ds.status,
-        ds.reviewed_by,
-        ru.name as reviewed_by_name,
-        ds.review_comment,
-        ds.reviewed_at,
-        ds.created_at
-      FROM daily_submissions ds
-      JOIN templates t ON ds.template_id = t.id
-      JOIN users u ON ds.submitted_by = u.id
-      LEFT JOIN users ru ON ds.reviewed_by = ru.id
-      WHERE ds.id = $1
-    `, [submissionId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Submission not found' });
+        const sheet = xlsx.utils.aoa_to_sheet(sheetData);
+        const safeName = (first.template_name || "Template").substring(0, 30);
+        xlsx.utils.book_append_sheet(workbook, sheet, safeName || "Sheet");
+      });
+
+      const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="project-${projectId}-submissions.xlsx"`,
+      );
+      res.send(buffer);
+    } catch (error) {
+      console.error("Error exporting submissions:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to export submissions" });
     }
-    
-    const row = result.rows[0];
-    res.json({
-      success: true,
-      data: {
-        id: row.id,
-        project_id: row.project_id,
-        template_id: row.template_id,
-        template_snapshot: parseJson(row.template_snapshot, null),
-        template: {
-          name: row.template_name,
-          template_type: row.template_type || 'form',
-          fields: parseJson(row.fields, []),
-          rows: parseJson(row.rows, []),
-          columns: parseJson(row.columns, []),
-          row_limit: row.row_limit
-        },
-        submitted_by: row.submitted_by_name,
-        submission_date: row.submission_date,
-        data: parseJson(row.data, {}),
-        status: row.status,
-        reviewed_by: row.reviewed_by_name,
-        review_comment: row.review_comment,
-        reviewed_at: row.reviewed_at,
-        created_at: row.created_at
+  },
+);
+
+// FIX: Bug1 - Rename singular route to avoid collision with /:projectId/submissions.
+router.get(
+  "/submission/:submissionId",
+  requireRole("superadmin", "project_manager", "site_engineer"),
+  async (req, res) => {
+    try {
+      const { submissionId } = req.params;
+
+      const result = await pool.query(
+        `SELECT
+         ds.id,
+         ds.project_id,
+         ds.template_id,
+         t.name as template_name,
+         t.template_type,
+         t.fields,
+         t.rows,
+         t.columns,
+         t.row_limit,
+         p.name as project_name,
+         ds.submitted_by,
+         u.name as submitted_by_name,
+         ds.submission_date,
+         ds.data,
+         ds.template_snapshot,
+         ds.status,
+         ds.reviewed_by,
+         ru.name as reviewed_by_name,
+         ds.review_comment,
+         ds.reviewed_at,
+         ds.created_at
+       FROM daily_submissions ds
+       JOIN templates t ON ds.template_id = t.id
+       JOIN users u ON ds.submitted_by = u.id
+       JOIN projects p ON ds.project_id = p.id
+       LEFT JOIN users ru ON ds.reviewed_by = ru.id
+       WHERE ds.id = $1`,
+        [submissionId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Submission not found" });
       }
-    });
-  } catch (error) {
-    console.error('Error fetching submission:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch submission' });
-  }
-});
 
-// ========================================
-// POST /api/project-templates/submissions/:submissionId/approve - Approve submission
-// ========================================
-router.post('/submissions/:submissionId/approve', requireRole('superadmin', 'project_manager'), async (req, res) => {
-  try {
-    const { submissionId } = req.params;
-    const userId = req.user.id;
-    
-    const result = await pool.query(`
-      UPDATE daily_submissions
-      SET 
-        status = 'approved',
-        reviewed_by = $1,
-        reviewed_at = NOW()
-      WHERE id = $2
-      RETURNING *
-    `, [userId, submissionId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Submission not found' });
+      const row = result.rows[0];
+      res.json({
+        success: true,
+        data: {
+          id: row.id,
+          project_id: row.project_id,
+          project_name: row.project_name,
+          template_id: row.template_id,
+          template_snapshot: parseJson(row.template_snapshot, null),
+          template: {
+            name: row.template_name,
+            template_type: row.template_type || "form",
+            fields: parseJson(row.fields, []),
+            rows: parseJson(row.rows, []),
+            columns: parseJson(row.columns, []),
+            row_limit: row.row_limit,
+          },
+          submitted_by: row.submitted_by,
+          submitted_by_name: row.submitted_by_name,
+          submission_date: row.submission_date,
+          data: parseJson(row.data, {}),
+          status: row.status,
+          reviewed_by: row.reviewed_by,
+          reviewed_by_name: row.reviewed_by_name,
+          review_comment: row.review_comment,
+          reviewed_at: row.reviewed_at,
+          created_at: row.created_at,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching submission:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to fetch submission" });
     }
-    
-    res.json({
-      success: true,
-      message: 'Submission approved',
-      data: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Error approving submission:', error);
-    res.status(500).json({ success: false, error: 'Failed to approve submission' });
-  }
-});
+  },
+);
 
-// ========================================
-// POST /api/project-templates/submissions/:submissionId/reject - Reject submission
-// ========================================
-router.post('/submissions/:submissionId/reject', requireRole('superadmin', 'project_manager'), async (req, res) => {
-  try {
-    const { submissionId } = req.params;
-    const { review_comment } = req.body;
-    const userId = req.user.id;
-    
-    const result = await pool.query(`
-      UPDATE daily_submissions
-      SET 
-        status = 'rejected',
-        reviewed_by = $1,
-        review_comment = $2,
-        reviewed_at = NOW()
-      WHERE id = $3
-      RETURNING *
-    `, [userId, review_comment || '', submissionId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Submission not found' });
+// FIX: Bug5/Feature1 - Generate Excel document for any submission type.
+router.get(
+  "/submission/:submissionId/generate-document",
+  requireRole("project_manager", "superadmin"),
+  async (req, res) => {
+    try {
+      const { submissionId } = req.params;
+
+      const result = await pool.query(
+        `SELECT
+         ds.id,
+         ds.project_id,
+         ds.template_id,
+         ds.submission_date,
+         ds.data,
+         ds.template_snapshot,
+         ds.status,
+         p.name as project_name,
+         t.name as template_name,
+         u.name as submitted_by_name
+       FROM daily_submissions ds
+       JOIN projects p ON p.id = ds.project_id
+       JOIN templates t ON t.id = ds.template_id
+       JOIN users u ON u.id = ds.submitted_by
+       WHERE ds.id = $1`,
+        [submissionId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Submission not found" });
+      }
+
+      const submission = result.rows[0];
+      const snapshot = parseJson(submission.template_snapshot, {});
+      const templateType = snapshot.template_type || "form";
+
+      const sheetData = [];
+      sheetData.push(["Template Name", submission.template_name]);
+      sheetData.push(["Project", submission.project_name]);
+      sheetData.push(["Submitted By", submission.submitted_by_name]);
+      sheetData.push(["Date", submission.submission_date]);
+      sheetData.push(["Status", submission.status]);
+      sheetData.push([]);
+
+      if (templateType === "table") {
+        buildSingleSubmissionWorkbookTableType(sheetData, submission);
+      } else if (templateType === "row") {
+        buildSingleSubmissionWorkbookRowType(sheetData, submission);
+      } else {
+        buildSingleSubmissionWorkbookFormType(sheetData, submission);
+      }
+
+      const workbook = xlsx.utils.book_new();
+      const sheet = xlsx.utils.aoa_to_sheet(sheetData);
+      const sheetName = (submission.template_name || "Submission").substring(
+        0,
+        31,
+      );
+      xlsx.utils.book_append_sheet(workbook, sheet, sheetName || "Submission");
+
+      const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="submission-${submissionId}.xlsx"`,
+      );
+      res.send(buffer);
+    } catch (error) {
+      console.error("Error generating submission document:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to generate document" });
     }
-    
-    res.json({
-      success: true,
-      message: 'Submission rejected',
-      data: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Error rejecting submission:', error);
-    res.status(500).json({ success: false, error: 'Failed to reject submission' });
-  }
-});
+  },
+);
+
+router.post(
+  "/submission/:submissionId/approve",
+  requireRole("superadmin", "project_manager"),
+  async (req, res) => {
+    try {
+      const { submissionId } = req.params;
+      const userId = req.user.id;
+
+      const result = await pool.query(
+        `UPDATE daily_submissions
+       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+        [userId, submissionId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Submission not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Submission approved",
+        data: result.rows[0],
+      });
+    } catch (error) {
+      console.error("Error approving submission:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to approve submission" });
+    }
+  },
+);
+
+router.post(
+  "/submission/:submissionId/reject",
+  requireRole("superadmin", "project_manager"),
+  async (req, res) => {
+    try {
+      const { submissionId } = req.params;
+      const { review_comment } = req.body;
+      const userId = req.user.id;
+
+      const result = await pool.query(
+        `UPDATE daily_submissions
+       SET status = 'rejected', reviewed_by = $1, review_comment = $2, reviewed_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+        [userId, review_comment || "", submissionId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Submission not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Submission rejected",
+        data: result.rows[0],
+      });
+    } catch (error) {
+      console.error("Error rejecting submission:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to reject submission" });
+    }
+  },
+);
+
+// FIX: Bug1/Bug9/Feature4 - Submit endpoint uses unambiguous param name and returns inserted/updated flag.
+router.post(
+  "/:projectTemplateId/submit",
+  requireRole("site_engineer"),
+  async (req, res) => {
+    try {
+      const { projectTemplateId } = req.params;
+      const { data, submissionDate } = req.body;
+      const userId = req.user.id;
+
+      const ptResult = await pool.query(
+        `SELECT project_id, template_id FROM project_templates WHERE id = $1 AND is_active = true`,
+        [projectTemplateId],
+      );
+
+      if (ptResult.rows.length === 0) {
+        return res.status(404).json({ error: "Project template not found" });
+      }
+
+      const { project_id, template_id } = ptResult.rows[0];
+
+      const templateResult = await pool.query(
+        `SELECT id, name, template_type, fields, rows, columns, row_limit
+       FROM templates
+       WHERE id = $1`,
+        [template_id],
+      );
+
+      if (templateResult.rows.length === 0) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+
+      const templateRow = templateResult.rows[0];
+      const templateSnapshot = {
+        id: templateRow.id,
+        name: templateRow.name,
+        template_type: templateRow.template_type || "form",
+        fields: parseJson(templateRow.fields, []),
+        rows: parseJson(templateRow.rows, []),
+        columns: parseJson(templateRow.columns, []),
+        row_limit: templateRow.row_limit,
+      };
+
+      if (!data || typeof data !== "object") {
+        return res.status(400).json({ error: "Submission data is required" });
+      }
+
+      if (templateSnapshot.template_type === "table") {
+        const rowData = Array.isArray(data.rows) ? data.rows : [];
+        if (rowData.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "Table submissions require at least one row" });
+        }
+        if (
+          templateSnapshot.row_limit &&
+          rowData.length > templateSnapshot.row_limit
+        ) {
+          return res
+            .status(400)
+            .json({ error: "Row limit exceeded for this template" });
+        }
+      } else {
+        // FIX: Feature4 - Validate required fields by name/label case-insensitively and support required row cells.
+        const missing = extractSubmissionValues(data, templateSnapshot);
+        if (missing.length > 0) {
+          return res
+            .status(400)
+            .json({ error: `Missing required fields: ${missing.join(", ")}` });
+        }
+      }
+
+      // FIX: Bug9 - Detect insert vs update using xmax and return explicit updated flag.
+      const result = await pool.query(
+        `INSERT INTO daily_submissions (
+         project_id,
+         template_id,
+         submitted_by,
+         submission_date,
+         data,
+         template_snapshot,
+         status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
+       ON CONFLICT (project_id, template_id, submission_date)
+       DO UPDATE SET
+         data = EXCLUDED.data,
+         template_snapshot = EXCLUDED.template_snapshot,
+         status = 'submitted',
+         reviewed_by = NULL,
+         review_comment = NULL,
+         reviewed_at = NULL
+       RETURNING *, (xmax = 0) AS inserted`,
+        [
+          project_id,
+          template_id,
+          userId,
+          submissionDate,
+          JSON.stringify(data),
+          JSON.stringify(templateSnapshot),
+        ],
+      );
+
+      const row = result.rows[0];
+      const inserted = !!row.inserted;
+
+      res.status(201).json({
+        success: true,
+        inserted,
+        updated: !inserted,
+        submission: row,
+      });
+    } catch (error) {
+      console.error("Error submitting template:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to submit template" });
+    }
+  },
+);
 
 export default router;

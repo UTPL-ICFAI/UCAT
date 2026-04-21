@@ -107,6 +107,17 @@
         <div id="submissions" class="tab-content">
           <h3>Template Submissions Review</h3>
           <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">Project Selection</div>
+            <div style="padding: 15px;">
+              <div class="form-group">
+                <label>Select Project</label>
+                <select id="pmProjectSelect" class="form-control" onchange="loadPMSubmissions()">
+                  <option value="">Select a project...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: 20px;">
             <div class="card-header">Filter Submissions</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; padding: 15px;">
               <div class="form-group">
@@ -132,7 +143,7 @@
           </div>
           <div style="display: flex; gap: 10px; margin-bottom: 15px;">
             <button class="btn btn-secondary" onclick="exportSubmissionsJson()">Export JSON</button>
-            <button class="btn btn-secondary" onclick="exportSubmissionsCsv()">Export CSV</button>
+            <button class="btn btn-secondary" onclick="exportSubmissionsExcel()">Export Excel</button>
           </div>
           <table id="submissionsTable">
             <thead>
@@ -313,8 +324,8 @@
       <div style="padding: 20px;">
         <div id="reviewSubmissionContent"></div>
         <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; display: flex; gap: 10px;">
+          <button class="btn btn-secondary" onclick="downloadSubmissionExcel()">Download Excel</button>
           <button class="btn btn-secondary" onclick="downloadSubmissionJson()">Download JSON</button>
-          <button class="btn btn-secondary" onclick="downloadSubmissionCsv()">Download CSV</button>
           <button class="btn btn-success" onclick="approveSubmission()">✓ Approve</button>
           <button class="btn btn-danger" onclick="rejectSubmissionModal()">✗ Reject</button>
           <button class="btn btn-secondary" onclick="closeModal('reviewSubmissionModal')" style="margin-left: auto;">Close</button>
