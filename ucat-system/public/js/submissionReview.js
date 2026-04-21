@@ -6,100 +6,159 @@
 let currentReviewSubmission = null;
 let pmSubmissionsCache = [];
 
+function getAuthHeaders(extra = {}) {
+  return {
+    Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+    ...extra,
+  };
+}
+
+function selectedPMProjectId() {
+  return document.getElementById("pmProjectSelect")?.value || "";
+}
+
+// FIX: Bug6 - Load PM project select and decouple from data-project-id attribute.
+function loadPMProjectsIntoSelector() {
+  const select = document.getElementById("pmProjectSelect");
+  if (!select) return Promise.resolve();
+
+  return fetch("/api/projects", { headers: getAuthHeaders() })
+    .then((response) => response.json())
+    .then((projects) => {
+      const list = Array.isArray(projects) ? projects : [];
+      const current = select.value;
+
+      select.innerHTML = '<option value="">Select a project...</option>';
+      list.forEach((project) => {
+        const option = document.createElement("option");
+        option.value = project.id;
+        option.textContent = project.name;
+        select.appendChild(option);
+      });
+
+      if (
+        current &&
+        Array.from(select.options).some((opt) => opt.value === current)
+      ) {
+        select.value = current;
+      }
+    })
+    .catch((error) => {
+      console.error("Error loading PM projects:", error);
+      showToast("Failed to load projects", "error");
+    });
+}
+
+function renderSelectProjectPlaceholder() {
+  const tbody = document.getElementById("submissionsTableBody");
+  if (!tbody) return;
+  tbody.innerHTML =
+    '<tr><td colspan="6" style="text-align:center; padding:20px; color:#777;">Please select a project</td></tr>';
+}
+
 /**
- * Load submissions for current project
+ * Load submissions for selected project
  */
 function loadPMSubmissions() {
-  const currentProjectId = document.querySelector('[data-project-id]')?.getAttribute('data-project-id');
-  if (!currentProjectId) return;
-  
-  const templateFilter = document.getElementById('pmSubmissionTemplateFilter')?.value || '';
-  const statusFilter = document.getElementById('pmSubmissionStatusFilter')?.value || '';
-  const dateFilter = document.getElementById('pmSubmissionDateFilter')?.value || '';
-  
-  const token = localStorage.getItem('auth_token');
-  
+  const currentProjectId = selectedPMProjectId();
+  if (!currentProjectId) {
+    pmSubmissionsCache = [];
+    renderSelectProjectPlaceholder();
+    return;
+  }
+
+  const templateFilter =
+    document.getElementById("pmSubmissionTemplateFilter")?.value || "";
+  const statusFilter =
+    document.getElementById("pmSubmissionStatusFilter")?.value || "";
+  const dateFilter =
+    document.getElementById("pmSubmissionDateFilter")?.value || "";
+
   fetch(`/api/project-templates/${currentProjectId}/submissions`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+    headers: getAuthHeaders(),
   })
-    .then(response => response.json())
-    .then(data => {
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success && Array.isArray(data.data)) {
         let submissions = data.data;
-        
-        // Apply filters
-        if (templateFilter) {
-          submissions = submissions.filter(s => s.template_id == templateFilter);
-        }
-        if (statusFilter) {
-          submissions = submissions.filter(s => s.status === statusFilter);
-        }
-        if (dateFilter) {
-          submissions = submissions.filter(s => s.submission_date === dateFilter);
-        }
-        
+
+        if (templateFilter)
+          submissions = submissions.filter(
+            (s) => String(s.template_id) === String(templateFilter),
+          );
+        if (statusFilter)
+          submissions = submissions.filter((s) => s.status === statusFilter);
+        if (dateFilter)
+          submissions = submissions.filter(
+            (s) => s.submission_date === dateFilter,
+          );
+
         pmSubmissionsCache = submissions;
         renderPMSubmissions(submissions);
         loadTemplatesForFilter();
+      } else {
+        pmSubmissionsCache = [];
+        renderPMSubmissions([]);
       }
     })
-    .catch(error => console.error('Error loading submissions:', error));
+    .catch((error) => {
+      console.error("Error loading submissions:", error);
+      showToast("Failed to load submissions", "error");
+    });
 }
 
 /**
  * Load templates for filter dropdown
  */
 function loadTemplatesForFilter() {
-  const currentProjectId = document.querySelector('[data-project-id]')?.getAttribute('data-project-id');
+  const currentProjectId = selectedPMProjectId();
   if (!currentProjectId) return;
-  
-  const token = localStorage.getItem('auth_token');
-  
+
   fetch(`/api/project-templates/${currentProjectId}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+    headers: getAuthHeaders(),
   })
-    .then(response => response.json())
-    .then(data => {
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success && Array.isArray(data.data)) {
-        const select = document.getElementById('pmSubmissionTemplateFilter');
-        if (select) {
-          const currentValue = select.value;
-          select.innerHTML = '<option value="">All Templates</option>';
-          
-          data.data.forEach(assignment => {
-            const option = document.createElement('option');
-            option.value = assignment.template_id;
-            option.textContent = assignment.template.name;
-            select.appendChild(option);
-          });
-          
-          select.value = currentValue;
-        }
+        const select = document.getElementById("pmSubmissionTemplateFilter");
+        if (!select) return;
+
+        const currentValue = select.value;
+        select.innerHTML = '<option value="">All Templates</option>';
+
+        data.data.forEach((assignment) => {
+          const option = document.createElement("option");
+          option.value = assignment.template_id;
+          option.textContent =
+            assignment.template?.name || assignment.name || "Template";
+          select.appendChild(option);
+        });
+
+        select.value = currentValue;
       }
     })
-    .catch(error => console.error('Error loading templates:', error));
+    .catch((error) => console.error("Error loading templates:", error));
 }
 
 /**
  * Render submissions in table
  */
 function renderPMSubmissions(submissions) {
-  const tbody = document.getElementById('submissionsTableBody');
+  const tbody = document.getElementById("submissionsTableBody");
   if (!tbody) return;
-  
-  if (submissions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px;">No submissions found</td></tr>';
+
+  if (!submissions || submissions.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="6" style="text-align:center; padding:20px;">No submissions found</td></tr>';
     return;
   }
-  
-  tbody.innerHTML = submissions.map(submission => `
-    <tr style="background: ${submission.status === 'submitted' ? '#fffbea' : ''};">
-      <td>${submission.template?.name || 'N/A'}</td>
-      <td>${submission.submitted_by_name || submission.submitted_by || 'Unknown'}</td>
+
+  tbody.innerHTML = submissions
+    .map(
+      (submission) => `
+    <tr style="background: ${submission.status === "submitted" ? "#fffbea" : ""};">
+      <td>${submission.template?.name || "N/A"}</td>
+      <td>${submission.submitted_by_name || submission.submitted_by || "Unknown"}</td>
       <td>${formatDate(submission.submission_date)}</td>
       <td>
         <span class="status-badge status-${submission.status}">
@@ -109,88 +168,98 @@ function renderPMSubmissions(submissions) {
       <td>${formatDate(submission.created_at)}</td>
       <td>
         <button class="btn btn-sm" onclick="reviewSubmission(${submission.id})">Review</button>
-        ${submission.status === 'submitted' ? `
-          <button class="btn btn-sm btn-success" onclick="quickApprove(${submission.id})">Approve</button>
-        ` : ''}
+        ${submission.status === "submitted" ? `<button class="btn btn-sm btn-success" onclick="quickApprove(${submission.id})">Approve</button>` : ""}
       </td>
     </tr>
-  `).join('');
+  `,
+    )
+    .join("");
 }
 
 /**
  * Review a submission - open modal with details
  */
 function reviewSubmission(submissionId) {
-  const token = localStorage.getItem('auth_token');
-  
-  fetch(`/api/project-templates/submissions/${submissionId}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+  fetch(`/api/project-templates/submission/${submissionId}`, {
+    headers: getAuthHeaders(),
   })
-    .then(response => response.json())
-    .then(data => {
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success) {
         currentReviewSubmission = data.data;
         renderReviewModal(data.data);
-        document.getElementById('reviewSubmissionModal').style.display = 'flex';
+        document.getElementById("reviewSubmissionModal").style.display = "flex";
+      } else {
+        showToast(data.error || "Failed to load submission", "error");
       }
     })
-    .catch(error => console.error('Error loading submission:', error));
+    .catch((error) => {
+      console.error("Error loading submission:", error);
+      showToast("Error loading submission", "error");
+    });
 }
 
 /**
  * Render review modal content
  */
 function renderReviewModal(submission) {
-  const titleEl = document.getElementById('reviewModalTitle');
-  const contentEl = document.getElementById('reviewSubmissionContent');
-  
-  titleEl.textContent = `${submission.template?.name || 'Submission'} - ${formatDate(submission.submission_date)}`;
-  
+  const titleEl = document.getElementById("reviewModalTitle");
+  const contentEl = document.getElementById("reviewSubmissionContent");
+
+  titleEl.textContent = `${submission.template?.name || "Submission"} - ${formatDate(submission.submission_date)}`;
+
   let html = `
     <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
       <div>
-        <p><strong>Template:</strong> ${submission.template?.name || 'N/A'}</p>
-        <p><strong>Submitted By:</strong> ${submission.submitted_by_name || submission.submitted_by || 'Unknown'}</p>
+        <p><strong>Template:</strong> ${submission.template?.name || "N/A"}</p>
+        <p><strong>Submitted By:</strong> ${submission.submitted_by_name || submission.submitted_by || "Unknown"}</p>
         <p><strong>Date:</strong> ${formatDate(submission.submission_date)}</p>
       </div>
       <div>
         <p><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></p>
         <p><strong>Submitted On:</strong> ${formatDate(submission.created_at)}</p>
-        ${submission.reviewed_by ? `<p><strong>Reviewed By:</strong> ${submission.reviewed_by}</p>` : ''}
+        ${submission.reviewed_by_name ? `<p><strong>Reviewed By:</strong> ${submission.reviewed_by_name}</p>` : ""}
       </div>
     </div>
-    
+
     <h4>Submitted Data:</h4>
   `;
-  
+
   html += renderSubmissionData(submission);
-  
-  if (submission.status !== 'submitted') {
+
+  if (submission.status !== "submitted") {
     html += `
       <div style="margin-top: 15px; padding: 15px; background: #f0f0f0; border-radius: 6px;">
-        <p><strong>Review Comment:</strong> ${submission.review_comment || 'No comment provided'}</p>
+        <p><strong>Review Comment:</strong> ${submission.review_comment || "No comment provided"}</p>
       </div>
     `;
   }
-  
+
   contentEl.innerHTML = html;
 }
 
 function renderSubmissionData(submission) {
   const snapshot = submission.template_snapshot || submission.template || {};
-  const templateType = snapshot.template_type || 'form';
+  const templateType = snapshot.template_type || "form";
   const data = submission.data || {};
 
-  if (templateType === 'table' && Array.isArray(data.rows)) {
+  if (templateType === "table" && Array.isArray(data.rows)) {
     const columns = snapshot.columns || data.columns || [];
-    const header = columns.map(col => `<th style="padding: 10px; text-align: left; border: 1px solid #ddd;">${col}</th>`).join('');
-    const body = data.rows.map(row => `
+    const header = columns
+      .map(
+        (col) =>
+          `<th style="padding: 10px; text-align: left; border: 1px solid #ddd;">${col}</th>`,
+      )
+      .join("");
+    const body = data.rows
+      .map(
+        (row) => `
       <tr>
-        ${columns.map(col => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ''}</td>`).join('')}
+        ${columns.map((col) => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ""}</td>`).join("")}
       </tr>
-    `).join('');
+    `,
+      )
+      .join("");
 
     return `
       <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">
@@ -203,12 +272,16 @@ function renderSubmissionData(submission) {
   }
 
   if (Array.isArray(data.fields)) {
-    const rows = data.fields.map(field => `
+    const rows = data.fields
+      .map(
+        (field) => `
       <tr>
-        <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label}</td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || '-'}</td>
+        <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label || field.name || "Field"}</td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || "-"}</td>
       </tr>
-    `).join('');
+    `,
+      )
+      .join("");
 
     return `
       <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
@@ -226,24 +299,35 @@ function renderSubmissionData(submission) {
   }
 
   if (Array.isArray(data.rows)) {
-    const rowBlocks = data.rows.map(row => {
-      const cells = Array.isArray(row.cells) ? row.cells : [];
-      const cellRows = cells.map(cell => `
-        <tr>
-          <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cell.label}</td>
-          <td style="padding: 8px; border: 1px solid #ddd;">${cell.value || '-'}</td>
-        </tr>
-      `).join('');
+    const rowBlocks = data.rows
+      .map((row) => {
+        const cells = Array.isArray(row.cells) ? row.cells : [];
+        const cellRows = cells
+          .map((cell) => {
+            // FIX: Bug3 - Avoid [object Object] by resolving cell label/value safely.
+            const cellLabel =
+              typeof cell === "object" ? cell.label || "Cell" : String(cell);
+            const cellValue =
+              typeof cell === "object" ? cell.value || "-" : "-";
+            return `
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cellLabel}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${cellValue}</td>
+              </tr>
+            `;
+          })
+          .join("");
 
-      return `
-        <div style="margin-bottom: 12px;">
-          <div style="font-weight: 600; margin-bottom: 6px;">${row.label || 'Row'}</div>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tbody>${cellRows}</tbody>
-          </table>
-        </div>
-      `;
-    }).join('');
+        return `
+          <div style="margin-bottom: 12px;">
+            <div style="font-weight: 600; margin-bottom: 6px;">${row.label || "Row"}</div>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tbody>${cellRows}</tbody>
+            </table>
+          </div>
+        `;
+      })
+      .join("");
 
     return `
       <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
@@ -259,115 +343,91 @@ function renderSubmissionData(submission) {
   `;
 }
 
-function exportSubmissionsJson() {
-  if (!pmSubmissionsCache || pmSubmissionsCache.length === 0) {
-    showToast('No submissions to export', 'warning');
-    return;
-  }
-
-  downloadBlob(JSON.stringify(pmSubmissionsCache, null, 2), 'application/json', 'submissions.json');
+function triggerDownloadFromBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }
 
-function exportSubmissionsCsv() {
-  if (!pmSubmissionsCache || pmSubmissionsCache.length === 0) {
-    showToast('No submissions to export', 'warning');
-    return;
-  }
-
-  const tableSubmissions = pmSubmissionsCache.filter(sub => {
-    const snapshot = sub.template_snapshot || sub.template || {};
-    return (snapshot.template_type || 'form') === 'table';
-  });
-
-  if (tableSubmissions.length === 0) {
-    showToast('CSV export is available only for table templates', 'warning');
-    return;
-  }
-
-  const firstSnapshot = tableSubmissions[0].template_snapshot || tableSubmissions[0].template || {};
-  const columns = firstSnapshot.columns || [];
-  if (columns.length === 0) {
-    showToast('No columns found for CSV export', 'warning');
-    return;
-  }
-
-  const mismatched = tableSubmissions.some(sub => {
-    const snapshot = sub.template_snapshot || sub.template || {};
-    const subColumns = snapshot.columns || [];
-    return subColumns.join('|') !== columns.join('|');
-  });
-
-  if (mismatched) {
-    showToast('CSV export requires the same columns across submissions', 'warning');
-    return;
-  }
-
-  const header = ['submission_id', 'submission_date', 'submitted_by', ...columns];
-  const rows = [header];
-
-  tableSubmissions.forEach(sub => {
-    const data = sub.data || {};
-    const rowItems = Array.isArray(data.rows) ? data.rows : [];
-
-    rowItems.forEach(row => {
-      rows.push([
-        sub.id,
-        sub.submission_date,
-        sub.submitted_by_name || sub.submitted_by || '',
-        ...columns.map(col => row[col] || '')
-      ]);
-    });
-  });
-
-  const csv = rows.map(r => r.map(escapeCsv).join(',')).join('\n');
-  downloadBlob(csv, 'text/csv', 'submissions.csv');
+// FIX: Feature1 - Excel download works for all template types through backend generator.
+function downloadSubmissionExcel() {
+  if (!currentReviewSubmission) return;
+  generateSubmissionDocument(currentReviewSubmission.id);
 }
 
 function downloadSubmissionJson() {
   if (!currentReviewSubmission) return;
-  downloadBlob(JSON.stringify(currentReviewSubmission, null, 2), 'application/json', `submission_${currentReviewSubmission.id}.json`);
+  const blob = new Blob([JSON.stringify(currentReviewSubmission, null, 2)], {
+    type: "application/json",
+  });
+  triggerDownloadFromBlob(
+    blob,
+    `submission_${currentReviewSubmission.id}.json`,
+  );
 }
 
-function downloadSubmissionCsv() {
-  if (!currentReviewSubmission) return;
+// FIX: Bug5 - Use implemented backend route for Excel generation.
+function generateSubmissionDocument(submissionId) {
+  fetch(`/api/project-templates/submission/${submissionId}/generate-document`, {
+    headers: getAuthHeaders(),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error("Failed to generate document");
+      return response.blob();
+    })
+    .then((blob) => {
+      triggerDownloadFromBlob(blob, `submission-${submissionId}.xlsx`);
+    })
+    .catch((error) => {
+      console.error("Error generating document:", error);
+      showToast("Error generating document", "error");
+    });
+}
 
-  const snapshot = currentReviewSubmission.template_snapshot || currentReviewSubmission.template || {};
-  const templateType = snapshot.template_type || 'form';
-  if (templateType !== 'table') {
-    showToast('CSV export is only available for table templates', 'warning');
+function exportSubmissionsJson() {
+  if (!pmSubmissionsCache || pmSubmissionsCache.length === 0) {
+    showToast("No submissions to export", "warning");
     return;
   }
 
-  const columns = snapshot.columns || [];
-  const rows = [columns];
-  const dataRows = currentReviewSubmission.data?.rows || [];
-
-  dataRows.forEach(row => {
-    rows.push(columns.map(col => row[col] || ''));
+  const blob = new Blob([JSON.stringify(pmSubmissionsCache, null, 2)], {
+    type: "application/json",
   });
-
-  const csv = rows.map(r => r.map(escapeCsv).join(',')).join('\n');
-  downloadBlob(csv, 'text/csv', `submission_${currentReviewSubmission.id}.csv`);
+  triggerDownloadFromBlob(blob, "submissions.json");
 }
 
-function escapeCsv(value) {
-  const str = value === null || value === undefined ? '' : String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return '"' + str.replace(/"/g, '""') + '"';
+// FIX: Feature6 - Bulk export now uses backend export endpoint (xlsx default).
+function exportSubmissionsExcel() {
+  const projectId = selectedPMProjectId();
+  if (!projectId) {
+    showToast("Please select a project first", "warning");
+    return;
   }
-  return str;
+
+  fetch(`/api/project-templates/${projectId}/submissions/export?format=xlsx`, {
+    headers: getAuthHeaders(),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error("Export failed");
+      return response.blob();
+    })
+    .then((blob) => {
+      triggerDownloadFromBlob(blob, `project-${projectId}-submissions.xlsx`);
+    })
+    .catch((error) => {
+      console.error("Error exporting submissions:", error);
+      showToast("Failed to export submissions", "error");
+    });
 }
 
-function downloadBlob(content, contentType, filename) {
-  const blob = new Blob([content], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+// FIX: Feature6 - Backward-compatible alias; CSV action now routes to bulk export endpoint workflow.
+function exportSubmissionsCsv() {
+  exportSubmissionsExcel();
 }
 
 /**
@@ -375,169 +435,109 @@ function downloadBlob(content, contentType, filename) {
  */
 function approveSubmission() {
   if (!currentReviewSubmission) return;
-  
-  const token = localStorage.getItem('auth_token');
-  
-  fetch(`/api/project-templates/submissions/${currentReviewSubmission.id}/approve`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
+
+  fetch(
+    `/api/project-templates/submission/${currentReviewSubmission.id}/approve`,
+    {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ status: "approved" }),
     },
-    body: JSON.stringify({
-      status: 'approved'
-    })
-  })
-    .then(response => response.json())
-    .then(data => {
+  )
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success) {
-        showToast('Submission approved successfully', 'success');
-        closeModal('reviewSubmissionModal');
+        showToast("Submission approved successfully", "success");
+        closeModal("reviewSubmissionModal");
         loadPMSubmissions();
       } else {
-        showToast(data.message || 'Failed to approve', 'error');
+        showToast(data.message || "Failed to approve", "error");
       }
     })
-    .catch(error => {
-      console.error('Error approving submission:', error);
-      showToast('Error approving submission', 'error');
+    .catch((error) => {
+      console.error("Error approving submission:", error);
+      showToast("Error approving submission", "error");
     });
 }
 
-/**
- * Open reject reason modal
- */
 function rejectSubmissionModal() {
-  document.getElementById('rejectReasonModal').style.display = 'flex';
+  document.getElementById("rejectReasonModal").style.display = "flex";
 }
 
-/**
- * Confirm rejection with reason
- */
 function confirmRejection() {
   if (!currentReviewSubmission) return;
-  
-  const reason = document.getElementById('rejectReason').value.trim();
+
+  const reason = document.getElementById("rejectReason").value.trim();
   if (!reason) {
-    showToast('Please provide a rejection reason', 'error');
+    showToast("Please provide a rejection reason", "error");
     return;
   }
-  
-  const token = localStorage.getItem('auth_token');
-  
-  fetch(`/api/project-templates/submissions/${currentReviewSubmission.id}/reject`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
+
+  fetch(
+    `/api/project-templates/submission/${currentReviewSubmission.id}/reject`,
+    {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ status: "rejected", review_comment: reason }),
     },
-    body: JSON.stringify({
-      status: 'rejected',
-      review_comment: reason
-    })
-  })
-    .then(response => response.json())
-    .then(data => {
+  )
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success) {
-        showToast('Submission rejected', 'success');
-        closeModal('rejectReasonModal');
-        closeModal('reviewSubmissionModal');
-        document.getElementById('rejectReason').value = '';
+        showToast("Submission rejected", "success");
+        closeModal("rejectReasonModal");
+        closeModal("reviewSubmissionModal");
+        document.getElementById("rejectReason").value = "";
         loadPMSubmissions();
       } else {
-        showToast(data.message || 'Failed to reject', 'error');
+        showToast(data.message || "Failed to reject", "error");
       }
     })
-    .catch(error => {
-      console.error('Error rejecting submission:', error);
-      showToast('Error rejecting submission', 'error');
+    .catch((error) => {
+      console.error("Error rejecting submission:", error);
+      showToast("Error rejecting submission", "error");
     });
 }
 
-/**
- * Quick approve submission without opening modal
- */
 function quickApprove(submissionId) {
-  if (!confirm('Approve this submission?')) return;
-  
-  const token = localStorage.getItem('auth_token');
-  
-  fetch(`/api/project-templates/submissions/${submissionId}/approve`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      status: 'approved'
-    })
+  if (!confirm("Approve this submission?")) return;
+
+  fetch(`/api/project-templates/submission/${submissionId}/approve`, {
+    method: "POST",
+    headers: getAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ status: "approved" }),
   })
-    .then(response => response.json())
-    .then(data => {
+    .then((response) => response.json())
+    .then((data) => {
       if (data.success) {
-        showToast('Submission approved', 'success');
+        showToast("Submission approved", "success");
         loadPMSubmissions();
       } else {
-        showToast(data.message || 'Failed to approve', 'error');
+        showToast(data.message || "Failed to approve", "error");
       }
     })
-    .catch(error => {
-      console.error('Error approving submission:', error);
-      showToast('Error approving submission', 'error');
+    .catch((error) => {
+      console.error("Error approving submission:", error);
+      showToast("Error approving submission", "error");
     });
 }
 
-/**
- * Generate document from submission (Excel/PDF)
- */
-function generateSubmissionDocument(submissionId) {
-  const token = localStorage.getItem('auth_token');
-  
-  // This would call a document generation endpoint
-  // For now, showing placeholder
-  fetch(`/api/project-templates/submissions/${submissionId}/generate-document`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  })
-    .then(response => {
-      if (response.ok) {
-        // Download the file
-        return response.blob().then(blob => {
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `submission-${submissionId}.xlsx`;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-        });
-      } else {
-        showToast('Failed to generate document', 'error');
-      }
-    })
-    .catch(error => {
-      console.error('Error generating document:', error);
-      showToast('Error generating document', 'error');
-    });
-}
-
-/**
- * Initialize submission review module
- */
 function initSubmissionReview() {
-  // Load submissions when switching to submissions tab
-  const submissionsTab = document.getElementById('submissions');
-  if (submissionsTab) {
-    // Initial load
-    loadPMSubmissions();
+  const select = document.getElementById("pmProjectSelect");
+  if (select && !select.dataset.boundSubmissionReview) {
+    select.dataset.boundSubmissionReview = "true";
+    select.addEventListener("change", loadPMSubmissions);
   }
+
+  // FIX: Bug6 - Ensure selector is populated before first load.
+  loadPMProjectsIntoSelector().then(() => {
+    if (selectedPMProjectId()) loadPMSubmissions();
+    else renderSelectProjectPlaceholder();
+  });
 }
 
-// Initialize when page loads
-document.addEventListener('DOMContentLoaded', () => {
-  if (document.getElementById('reviewSubmissionModal')) {
+document.addEventListener("DOMContentLoaded", () => {
+  if (document.getElementById("reviewSubmissionModal")) {
     initSubmissionReview();
   }
 });
