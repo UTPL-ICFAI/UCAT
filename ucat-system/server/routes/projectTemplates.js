@@ -1,4 +1,6 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
 import xlsx from "xlsx";
 import pool from "../db.js";
 import { requireRole } from "../middleware/role.js";
@@ -218,6 +220,78 @@ function toCsvRow(values) {
       return str;
     })
     .join(",");
+}
+
+async function createApprovedSubmissionDocument(
+  client,
+  submission,
+  approverId,
+) {
+  const snapshot = parseJson(submission.template_snapshot, {});
+  const templateType = snapshot.template_type || "form";
+
+  const sheetData = [];
+  sheetData.push(["Template Name", submission.template_name]);
+  sheetData.push(["Project", submission.project_name]);
+  sheetData.push(["Submitted By", submission.submitted_by_name]);
+  sheetData.push(["Date", submission.submission_date]);
+  sheetData.push(["Status", "approved"]);
+  sheetData.push([]);
+
+  if (templateType === "table") {
+    buildSingleSubmissionWorkbookTableType(sheetData, submission);
+  } else if (templateType === "row") {
+    buildSingleSubmissionWorkbookRowType(sheetData, submission);
+  } else {
+    buildSingleSubmissionWorkbookFormType(sheetData, submission);
+  }
+
+  const workbook = xlsx.utils.book_new();
+  const sheet = xlsx.utils.aoa_to_sheet(sheetData);
+  const sheetName = (submission.template_name || "Submission").substring(0, 31);
+  xlsx.utils.book_append_sheet(workbook, sheet, sheetName || "Submission");
+
+  const projectDirFs = path.join(
+    "uploads",
+    "documents",
+    String(submission.project_id),
+  );
+  if (!fs.existsSync(projectDirFs)) {
+    fs.mkdirSync(projectDirFs, { recursive: true });
+  }
+
+  const filename = `submission_${submission.id}_${Date.now()}.xlsx`;
+  const fileFsPath = path.join(projectDirFs, filename);
+  xlsx.writeFile(workbook, fileFsPath);
+
+  const dbFilePath = `uploads/documents/${submission.project_id}/${filename}`;
+
+  const docResult = await client.query(
+    `INSERT INTO documents (
+       project_id,
+       uploaded_by,
+       title,
+       file_path,
+       original_name,
+       doc_type,
+       doc_status,
+       remarks
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
+    [
+      submission.project_id,
+      approverId,
+      `${submission.template_name} - ${submission.project_name}`,
+      dbFilePath,
+      filename,
+      "template_submission",
+      "approved",
+      `Auto-generated from approved template submission #${submission.id}`,
+    ],
+  );
+
+  return docResult.rows[0]?.id || null;
 }
 
 router.get(
@@ -818,34 +892,80 @@ router.post(
   "/submission/:submissionId/approve",
   requireRole("superadmin", "project_manager"),
   async (req, res) => {
+    const client = await pool.connect();
     try {
       const { submissionId } = req.params;
       const userId = req.user.id;
 
-      const result = await pool.query(
-        `UPDATE daily_submissions
-       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-        [userId, submissionId],
+      await client.query("BEGIN");
+
+      const submissionQuery = await client.query(
+        `SELECT
+           ds.id,
+           ds.project_id,
+           ds.template_id,
+           ds.submission_date,
+           ds.data,
+           ds.template_snapshot,
+           ds.status,
+           p.name as project_name,
+           t.name as template_name,
+           u.name as submitted_by_name
+         FROM daily_submissions ds
+         JOIN projects p ON p.id = ds.project_id
+         JOIN templates t ON t.id = ds.template_id
+         JOIN users u ON u.id = ds.submitted_by
+         WHERE ds.id = $1
+         FOR UPDATE`,
+        [submissionId],
       );
 
-      if (result.rows.length === 0) {
+      if (submissionQuery.rows.length === 0) {
+        await client.query("ROLLBACK");
         return res
           .status(404)
           .json({ success: false, error: "Submission not found" });
       }
 
+      const submissionRow = submissionQuery.rows[0];
+
+      const documentId = await createApprovedSubmissionDocument(
+        client,
+        submissionRow,
+        userId,
+      );
+
+      const result = await client.query(
+        `UPDATE daily_submissions
+       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), document_id = $2
+       WHERE id = $3
+       RETURNING *`,
+        [userId, documentId, submissionId],
+      );
+
+      if (result.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res
+          .status(404)
+          .json({ success: false, error: "Submission not found" });
+      }
+
+      await client.query("COMMIT");
+
       res.json({
         success: true,
         message: "Submission approved",
         data: result.rows[0],
+        document_created: !!documentId,
       });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error("Error approving submission:", error);
       res
         .status(500)
         .json({ success: false, error: "Failed to approve submission" });
+    } finally {
+      client.release();
     }
   },
 );
@@ -894,7 +1014,7 @@ router.post(
   async (req, res) => {
     try {
       const { projectTemplateId } = req.params;
-      const { data, submissionDate } = req.body;
+      const { data, submissionDate, originalSubmissionId } = req.body;
       const userId = req.user.id;
 
       const ptResult = await pool.query(
@@ -959,6 +1079,56 @@ router.post(
         }
       }
 
+      if (originalSubmissionId) {
+        const original = await pool.query(
+          `SELECT id, project_id, template_id, submitted_by
+           FROM daily_submissions
+           WHERE id = $1`,
+          [originalSubmissionId],
+        );
+
+        if (original.rows.length === 0) {
+          return res
+            .status(404)
+            .json({ error: "Original submission not found" });
+        }
+
+        const originalRow = original.rows[0];
+        if (
+          originalRow.submitted_by !== userId ||
+          originalRow.project_id !== project_id ||
+          originalRow.template_id !== template_id
+        ) {
+          return res
+            .status(403)
+            .json({ error: "Not allowed to resubmit this entry" });
+        }
+
+        const updateResult = await pool.query(
+          `UPDATE daily_submissions
+           SET data = $1,
+               template_snapshot = $2,
+               status = 'submitted',
+               reviewed_by = NULL,
+               review_comment = NULL,
+               reviewed_at = NULL
+           WHERE id = $3
+           RETURNING *`,
+          [
+            JSON.stringify(data),
+            JSON.stringify(templateSnapshot),
+            originalSubmissionId,
+          ],
+        );
+
+        return res.status(200).json({
+          success: true,
+          inserted: false,
+          updated: true,
+          submission: updateResult.rows[0],
+        });
+      }
+
       // FIX: Bug9 - Detect insert vs update using xmax and return explicit updated flag.
       const result = await pool.query(
         `INSERT INTO daily_submissions (
@@ -976,6 +1146,7 @@ router.post(
          data = EXCLUDED.data,
          template_snapshot = EXCLUDED.template_snapshot,
          status = 'submitted',
+         document_id = NULL,
          reviewed_by = NULL,
          review_comment = NULL,
          reviewed_at = NULL

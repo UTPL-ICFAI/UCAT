@@ -13,54 +13,25 @@ function getAuthHeaders(extra = {}) {
   };
 }
 
-function selectedPMProjectId() {
-  return document.getElementById("pmProjectSelect")?.value || "";
-}
-
-// FIX: Bug6 - Load PM project select and decouple from data-project-id attribute.
-function loadPMProjectsIntoSelector() {
-  const select = document.getElementById("pmProjectSelect");
-  if (!select) return Promise.resolve();
-
-  return fetch("/api/projects", { headers: getAuthHeaders() })
-    .then((response) => response.json())
-    .then((projects) => {
-      const list = Array.isArray(projects) ? projects : [];
-      const current = select.value;
-
-      select.innerHTML = '<option value="">Select a project...</option>';
-      list.forEach((project) => {
-        const option = document.createElement("option");
-        option.value = project.id;
-        option.textContent = project.name;
-        select.appendChild(option);
-      });
-
-      if (
-        current &&
-        Array.from(select.options).some((opt) => opt.value === current)
-      ) {
-        select.value = current;
-      }
-    })
-    .catch((error) => {
-      console.error("Error loading PM projects:", error);
-      showToast("Failed to load projects", "error");
-    });
+function effectivePMProjectId() {
+  if (typeof currentProjectId !== "undefined" && currentProjectId) {
+    return String(currentProjectId);
+  }
+  return "";
 }
 
 function renderSelectProjectPlaceholder() {
   const tbody = document.getElementById("submissionsTableBody");
   if (!tbody) return;
   tbody.innerHTML =
-    '<tr><td colspan="6" style="text-align:center; padding:20px; color:#777;">Please select a project</td></tr>';
+    '<tr><td colspan="6" style="text-align:center; padding:20px; color:#777;">Open a project to view submissions</td></tr>';
 }
 
 /**
  * Load submissions for selected project
  */
 function loadPMSubmissions() {
-  const currentProjectId = selectedPMProjectId();
+  const currentProjectId = effectivePMProjectId();
   if (!currentProjectId) {
     pmSubmissionsCache = [];
     renderSelectProjectPlaceholder();
@@ -111,7 +82,7 @@ function loadPMSubmissions() {
  * Load templates for filter dropdown
  */
 function loadTemplatesForFilter() {
-  const currentProjectId = selectedPMProjectId();
+  const currentProjectId = effectivePMProjectId();
   if (!currentProjectId) return;
 
   fetch(`/api/project-templates/${currentProjectId}`, {
@@ -403,7 +374,7 @@ function exportSubmissionsJson() {
 
 // FIX: Feature6 - Bulk export now uses backend export endpoint (xlsx default).
 function exportSubmissionsExcel() {
-  const projectId = selectedPMProjectId();
+  const projectId = effectivePMProjectId();
   if (!projectId) {
     showToast("Please select a project first", "warning");
     return;
@@ -523,17 +494,8 @@ function quickApprove(submissionId) {
 }
 
 function initSubmissionReview() {
-  const select = document.getElementById("pmProjectSelect");
-  if (select && !select.dataset.boundSubmissionReview) {
-    select.dataset.boundSubmissionReview = "true";
-    select.addEventListener("change", loadPMSubmissions);
-  }
-
-  // FIX: Bug6 - Ensure selector is populated before first load.
-  loadPMProjectsIntoSelector().then(() => {
-    if (selectedPMProjectId()) loadPMSubmissions();
-    else renderSelectProjectPlaceholder();
-  });
+  if (effectivePMProjectId()) loadPMSubmissions();
+  else renderSelectProjectPlaceholder();
 }
 
 document.addEventListener("DOMContentLoaded", () => {

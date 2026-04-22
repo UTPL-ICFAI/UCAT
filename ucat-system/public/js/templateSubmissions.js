@@ -9,7 +9,37 @@ let currentSubmissionContext = {
   templateId: null,
   projectTemplateId: null,
   template: null,
+  originalSubmissionId: null,
 };
+
+function syncTemplateSubmissionProject(projectId) {
+  const select = document.getElementById("submissionProjectSelect");
+  if (!select) return;
+
+  if (!projectId) {
+    currentSubmissionContext.projectId = null;
+    currentSubmissionContext.originalSubmissionId = null;
+    select.disabled = false;
+    return;
+  }
+
+  const value = String(projectId);
+  const existing = Array.from(select.options).find(
+    (opt) => opt.value === value,
+  );
+  if (!existing) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = `Project ${value}`;
+    select.appendChild(option);
+  }
+
+  select.value = value;
+  select.disabled = true;
+  currentSubmissionContext.projectId = value;
+  loadTemplatesForProject();
+  loadSubmissionHistory();
+}
 
 function normalizeTemplate(template) {
   const templateType =
@@ -53,6 +83,10 @@ function loadProjectsForSubmissions() {
         option.textContent = project.name;
         select.appendChild(option);
       });
+
+      if (typeof currentProjectId !== "undefined" && currentProjectId) {
+        syncTemplateSubmissionProject(currentProjectId);
+      }
     })
     .catch((error) => console.error("Error loading projects:", error));
 }
@@ -104,6 +138,7 @@ function loadTemplatesForProject() {
 function onTemplateSelected() {
   const select = document.getElementById("submissionTemplateSelect");
   clearResubmitBanner();
+  currentSubmissionContext.originalSubmissionId = null;
   const selectedOption = select.options[select.selectedIndex];
 
   if (!select.value) {
@@ -418,6 +453,7 @@ function handleTemplateSubmit(e) {
       body: JSON.stringify({
         data: data,
         submissionDate: submissionDate,
+        originalSubmissionId: currentSubmissionContext.originalSubmissionId,
       }),
     },
   )
@@ -441,6 +477,7 @@ function handleTemplateSubmit(e) {
           showToast("Template submitted successfully", "success");
         }
         clearResubmitBanner();
+        currentSubmissionContext.originalSubmissionId = null;
         document.getElementById("dynamicTemplateForm").reset();
         loadSubmissionHistory();
       } else {
@@ -787,6 +824,7 @@ function resubmitRejectedSubmission(submissionId) {
       }
 
       const submission = payload.data;
+      currentSubmissionContext.originalSubmissionId = submission.id;
       const dateInput = document.getElementById("submissionDate");
       if (dateInput) dateInput.value = submission.submission_date;
 
