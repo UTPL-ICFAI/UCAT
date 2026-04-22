@@ -279,6 +279,31 @@
   margin: 10px 0;
 }
 
+/* Submission/document status chips */
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-submitted {
+  background: #fff4cc;
+  color: #8a6d00;
+}
+
+.status-rejected {
+  background: #fde2e2;
+  color: #b3261e;
+}
+
+.status-approved {
+  background: #dff6e6;
+  color: #1f7a3a;
+}
+
 .progress-fill {
   height: 100%;
   background: var(--primary-color);
@@ -575,16 +600,16 @@
   .sidebar {
     width: 200px;
   }
-  
+
   .main-content {
     margin-left: 200px;
     padding: 20px;
   }
-  
+
   .filter-row {
     flex-direction: column;
   }
-  
+
   .form-row {
     grid-template-columns: 1fr;
   }
@@ -598,34 +623,34 @@
     border-right: none;
     border-bottom: 1px solid var(--border-color);
   }
-  
+
   .main-content {
     margin-left: 0;
   }
-  
+
   .dashboard {
     flex-direction: column;
   }
-  
+
   .sidebar-footer {
     position: relative;
     bottom: auto;
   }
-  
+
   .gallery-grid {
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   }
-  
+
   .top-nav {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .top-nav-menu {
     flex-direction: column;
     width: 100%;
   }
-  
+
   .top-nav-user {
     flex-direction: column;
     width: 100%;

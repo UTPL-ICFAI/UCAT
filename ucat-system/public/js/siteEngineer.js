@@ -194,6 +194,10 @@ async function selectProject(projectId) {
   loadProjectIssues();
   loadProjectCommunications();
 
+  if (typeof syncTemplateSubmissionProject === "function") {
+    syncTemplateSubmissionProject(projectId);
+  }
+
   const attendanceDateEl = document.getElementById("attendanceDate");
   if (attendanceDateEl) attendanceDateEl.valueAsDate = new Date();
 }
@@ -203,6 +207,10 @@ function goBackToProjects() {
   document.getElementById("projectsGrid").style.display = "grid";
   document.getElementById("projectDetail").style.display = "none";
   document.getElementById("pageTitle").textContent = "My Projects";
+
+  if (typeof syncTemplateSubmissionProject === "function") {
+    syncTemplateSubmissionProject(null);
+  }
 }
 
 // ─── Tab Switching ────────────────────────────────────────────────────────────
