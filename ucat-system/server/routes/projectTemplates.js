@@ -2,6 +2,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import xlsx from "xlsx";
+import ExcelJS from "exceljs";
 import pool from "../db.js";
 import { requireRole } from "../middleware/role.js";
 
@@ -25,6 +26,9 @@ async function ensureTemplateTableCompatibility() {
       ADD COLUMN IF NOT EXISTS template_type VARCHAR(20) NOT NULL DEFAULT 'form',
       ADD COLUMN IF NOT EXISTS columns JSONB DEFAULT '[]',
       ADD COLUMN IF NOT EXISTS row_limit INTEGER,
+      ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pushed',
+      ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS scheduled_config JSONB,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
   `);
 
@@ -57,10 +61,65 @@ async function ensureSubmissionTableCompatibility() {
   }
 }
 
+async function processDueTemplateSchedules() {
+  const dueResult = await pool.query(
+    `SELECT id, user_id, scheduled_at, scheduled_config
+     FROM templates
+     WHERE is_active = true
+       AND status = 'scheduled'
+       AND scheduled_at IS NOT NULL
+       AND scheduled_at <= NOW()`,
+  );
+
+  for (const row of dueResult.rows) {
+    const config = parseJson(row.scheduled_config, {});
+    const projectId = Number(config.project_id || 0);
+    if (!projectId) {
+      await pool.query(
+        `UPDATE templates
+         SET status = 'draft',
+             scheduled_at = NULL,
+             scheduled_config = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [row.id],
+      );
+      continue;
+    }
+
+    const repetitionType = String(config.repetition_type || "daily");
+    const repetitionDays = normalizeRepetitionDays(config.repetition_days);
+
+    await pool.query(
+      `INSERT INTO project_templates (project_id, template_id, assigned_by, repetition_type, repetition_days, is_active)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT (project_id, template_id)
+       DO UPDATE SET
+         is_active = true,
+         assigned_by = EXCLUDED.assigned_by,
+         repetition_type = EXCLUDED.repetition_type,
+         repetition_days = EXCLUDED.repetition_days,
+         assigned_at = NOW()`,
+      [projectId, row.id, row.user_id || null, repetitionType, JSON.stringify(repetitionDays)],
+    );
+
+    await pool.query(
+      `UPDATE templates
+       SET status = 'pushed',
+           scheduled_at = NULL,
+           scheduled_config = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [row.id],
+    );
+  }
+}
+
 router.use(async (req, res, next) => {
   try {
     await ensureTemplateTableCompatibility();
     await ensureSubmissionTableCompatibility();
+    await processDueTemplateSchedules();
     next();
   } catch (error) {
     console.error("Template schema compatibility check failed:", error);
@@ -78,6 +137,290 @@ function parseJson(value, fallback) {
     }
   }
   return value;
+}
+
+function normalizeFormulaType(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "AVG") return "AVERAGE";
+  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeTemplateColumns(columnsInput) {
+  if (!Array.isArray(columnsInput)) return [];
+
+  return columnsInput
+    .map((column, index) => {
+      if (typeof column === "string") {
+        const name = column.trim();
+        if (!name) return null;
+        return {
+          id: `column_${Date.now()}_${index}`,
+          name,
+          isLocked: false,
+          fixedValue: null,
+          rowFixedValues: {},
+          formulaType: null,
+          formulaExpression: null,
+          formulaScope: "row",
+          formulaSourceColumns: [],
+        };
+      }
+
+      if (!column || typeof column !== "object") return null;
+
+      const name = String(column.name || "").trim();
+      if (!name) return null;
+
+      const normalizedFormulaType = normalizeFormulaType(column.formulaType);
+      const sourceColumns = Array.isArray(column.formulaSourceColumns)
+        ? column.formulaSourceColumns
+            .map((entry) => String(entry || "").trim())
+            .filter(Boolean)
+        : [];
+
+      return {
+        id: String(column.id || `column_${Date.now()}_${index}`),
+        name,
+        isLocked:
+          !!column.isLocked ||
+          !!normalizedFormulaType ||
+          !!column.formulaExpression,
+        fixedValue:
+          column.fixedValue === undefined ? null : String(column.fixedValue),
+        rowFixedValues:
+          column.rowFixedValues && typeof column.rowFixedValues === "object"
+            ? column.rowFixedValues
+            : {},
+        formulaType: normalizedFormulaType,
+        formulaExpression:
+          column.formulaExpression === undefined ||
+          column.formulaExpression === null
+            ? null
+            : String(column.formulaExpression),
+        formulaScope:
+          String(column.formulaScope || "row").toLowerCase() === "column"
+            ? "column"
+            : "row",
+        formulaSourceColumns: sourceColumns,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getColumnNames(columnsInput) {
+  return normalizeTemplateColumns(columnsInput).map((column) => column.name);
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function aggregateNumbers(values, formulaType) {
+  if (!Array.isArray(values) || values.length === 0) return "";
+
+  switch (formulaType) {
+    case "SUM":
+    case "TOTAL":
+      return values.reduce((acc, item) => acc + item, 0);
+    case "AVERAGE":
+      return values.reduce((acc, item) => acc + item, 0) / values.length;
+    case "MIN":
+      return Math.min(...values);
+    case "MAX":
+      return Math.max(...values);
+    default:
+      return "";
+  }
+}
+
+function letterToIndex(letters) {
+  let index = 0;
+  String(letters || "")
+    .toUpperCase()
+    .split("")
+    .forEach((char) => {
+      index = index * 26 + (char.charCodeAt(0) - 64);
+    });
+  return Math.max(0, index - 1);
+}
+
+function valueForCellRef(cellRef, rowIndex, rows, columnDefs) {
+  const match = String(cellRef || "").toUpperCase().match(/^([A-Z]+)(\d+)?$/);
+  if (!match) return null;
+  const colIdx = letterToIndex(match[1]);
+  const targetColumn = columnDefs[colIdx];
+  if (!targetColumn) return null;
+  const explicitRow = match[2] ? parseInt(match[2], 10) - 1 : rowIndex;
+  const targetRow = rows[explicitRow];
+  if (!targetRow) return null;
+  return toNumberOrNull(targetRow[targetColumn.name]);
+}
+
+function evaluateFormulaExpression(expression, rowIndex, rows, columnDefs) {
+  const raw = String(expression || "").trim();
+  if (!raw) return "";
+  const expr = raw.startsWith("=") ? raw.slice(1).trim() : raw;
+
+  const ifMatch = expr.match(/^IF\((.+),(.+),(.+)\)$/i);
+  if (ifMatch) {
+    const condition = ifMatch[1]
+      .replace(/([A-Z]+\d*)/g, (token) => {
+        const value = valueForCellRef(token, rowIndex, rows, columnDefs);
+        return value === null ? "0" : String(value);
+      })
+      .replace(/=/g, "==")
+      .replace(/>==/g, ">=")
+      .replace(/<==/g, "<=")
+      .replace(/!==/g, "!=");
+
+    let conditionResult = false;
+    try {
+      conditionResult = !!Function(`return (${condition});`)();
+    } catch (error) {
+      conditionResult = false;
+    }
+
+    const trueValue = ifMatch[2].trim().replace(/^"|"$/g, "");
+    const falseValue = ifMatch[3].trim().replace(/^"|"$/g, "");
+    return conditionResult ? trueValue : falseValue;
+  }
+
+  const sumMatch = expr.match(/^SUM\(([A-Z]+\d*):([A-Z]+\d*)\)$/i);
+  if (sumMatch) {
+    const startCell = String(sumMatch[1]).toUpperCase();
+    const endCell = String(sumMatch[2]).toUpperCase();
+    const startCol = letterToIndex(startCell.match(/^([A-Z]+)/)[1]);
+    const endCol = letterToIndex(endCell.match(/^([A-Z]+)/)[1]);
+    const startRow = startCell.match(/(\d+)$/)
+      ? parseInt(startCell.match(/(\d+)$/)[1], 10) - 1
+      : 0;
+    const endRow = endCell.match(/(\d+)$/)
+      ? parseInt(endCell.match(/(\d+)$/)[1], 10) - 1
+      : rows.length - 1;
+
+    let total = 0;
+    for (let r = Math.max(0, startRow); r <= Math.min(endRow, rows.length - 1); r += 1) {
+      for (let c = Math.max(0, startCol); c <= Math.min(endCol, columnDefs.length - 1); c += 1) {
+        const column = columnDefs[c];
+        if (!column) continue;
+        const numeric = toNumberOrNull(rows[r][column.name]);
+        if (numeric !== null) total += numeric;
+      }
+    }
+    return String(total);
+  }
+
+  const arithmetic = expr.replace(/([A-Z]+\d*)/g, (token) => {
+    const value = valueForCellRef(token, rowIndex, rows, columnDefs);
+    return value === null ? "0" : String(value);
+  });
+
+  try {
+    const result = Function(`return (${arithmetic});`)();
+    if (result === null || result === undefined || Number.isNaN(result)) return "";
+    return String(result);
+  } catch (error) {
+    return "";
+  }
+}
+
+function applyTableColumnPolicies(data, templateSnapshot) {
+  const columnDefs = normalizeTemplateColumns(templateSnapshot.columns);
+  const columnNames = columnDefs.map((column) => column.name);
+  const incomingRows = Array.isArray(data?.rows) ? data.rows : [];
+
+  const sanitizedRows = incomingRows.map((row, rowIndex) => {
+    const nextRow = {};
+
+    columnDefs.forEach((column) => {
+      const rowFixedCandidate =
+        column.rowFixedValues &&
+        Object.prototype.hasOwnProperty.call(column.rowFixedValues, String(rowIndex))
+          ? column.rowFixedValues[String(rowIndex)]
+          : null;
+
+      if (rowFixedCandidate !== null && rowFixedCandidate !== undefined) {
+        nextRow[column.name] = String(rowFixedCandidate);
+        return;
+      }
+
+      if (column.fixedValue !== null && column.fixedValue !== undefined) {
+        nextRow[column.name] = String(column.fixedValue);
+        return;
+      }
+
+      if (column.formulaType) {
+        nextRow[column.name] = "";
+        return;
+      }
+
+      const rawValue = row && typeof row === "object" ? row[column.name] : "";
+      nextRow[column.name] = rawValue === undefined || rawValue === null ? "" : String(rawValue);
+    });
+
+    return nextRow;
+  });
+
+  // Recompute formula columns after all rows are normalized.
+  columnDefs.forEach((column) => {
+    if (!column.formulaType) return;
+    const sourceColumns = Array.isArray(column.formulaSourceColumns)
+      ? column.formulaSourceColumns.filter(Boolean)
+      : [];
+    const effectiveSources =
+      sourceColumns.length > 0
+        ? sourceColumns
+        : columnNames.filter((name) => name !== column.name);
+
+    if (column.formulaScope === "column") {
+      const allValues = [];
+      sanitizedRows.forEach((row) => {
+        effectiveSources.forEach((source) => {
+          const numericValue = toNumberOrNull(row[source]);
+          if (numericValue !== null) allValues.push(numericValue);
+        });
+      });
+
+      const aggregate = aggregateNumbers(allValues, column.formulaType);
+      sanitizedRows.forEach((row) => {
+        row[column.name] = aggregate === "" ? "" : String(aggregate);
+      });
+      return;
+    }
+
+    sanitizedRows.forEach((row) => {
+      const rowValues = effectiveSources
+        .map((source) => toNumberOrNull(row[source]))
+        .filter((value) => value !== null);
+      const aggregate = aggregateNumbers(rowValues, column.formulaType);
+      row[column.name] = aggregate === "" ? "" : String(aggregate);
+    });
+  });
+
+  columnDefs.forEach((column) => {
+    if (!column.formulaExpression) return;
+    sanitizedRows.forEach((row, rowIndex) => {
+      row[column.name] = evaluateFormulaExpression(
+        column.formulaExpression,
+        rowIndex,
+        sanitizedRows,
+        columnDefs,
+      );
+    });
+  });
+
+  return {
+    ...data,
+    columns: columnNames,
+    rows: sanitizedRows,
+  };
 }
 
 function normalizeRepetitionDays(input) {
@@ -181,9 +524,9 @@ function buildSingleSubmissionWorkbookTableType(sheetData, submission) {
   const data = parseJson(submission.data, {});
   const columns =
     Array.isArray(snapshot.columns) && snapshot.columns.length > 0
-      ? snapshot.columns
+      ? getColumnNames(snapshot.columns)
       : Array.isArray(data.columns)
-        ? data.columns
+        ? getColumnNames(data.columns)
         : [];
 
   if (columns.length > 0) {
@@ -220,6 +563,22 @@ function toCsvRow(values) {
       return str;
     })
     .join(",");
+}
+
+function isRestrictedColumn(columnDef) {
+  if (!columnDef || typeof columnDef !== "object") return false;
+  if (columnDef.isBlocked || columnDef.blocked) return true;
+  if (String(columnDef.visibility || "").toUpperCase() === "BLOCKED") return true;
+  return false;
+}
+
+function safeSheetName(base, fallback, suffix = "") {
+  const clean = String(base || "")
+    .replace(/[\\/*?:\[\]]/g, "_")
+    .replace(/\s+/g, "_")
+    .substring(0, 31);
+  const composed = (clean || fallback || "Sheet").substring(0, 31 - suffix.length);
+  return `${composed}${suffix}`.substring(0, 31);
 }
 
 async function createApprovedSubmissionDocument(
@@ -274,20 +633,24 @@ async function createApprovedSubmissionDocument(
        file_path,
        original_name,
        doc_type,
+       doc_date,
+       revision_date,
        doc_status,
        remarks
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
     [
       submission.project_id,
       approverId,
-      `${submission.template_name} - ${submission.project_name}`,
+      `${submission.template_name} - ${submission.submitted_by_name || "Site Engineer"} - ${submission.submission_date}`,
       dbFilePath,
       filename,
       "template_submission",
+      submission.submission_date || null,
+      new Date().toISOString().slice(0, 10),
       "approved",
-      `Auto-generated from approved template submission #${submission.id}`,
+      `Template: ${submission.template_name}; Site Engineer: ${submission.submitted_by_name || "N/A"}; Submission Date: ${submission.submission_date || "N/A"}; Approval Date: ${new Date().toISOString().slice(0, 10)}; Source Submission: #${submission.id}`,
     ],
   );
 
@@ -545,9 +908,7 @@ router.get(
           const type = snapshot.template_type || first.template_type || "form";
 
           if (type === "table") {
-            const columns = Array.isArray(snapshot.columns)
-              ? snapshot.columns
-              : [];
+            const columns = getColumnNames(snapshot.columns);
             csvLines.push(
               toCsvRow([
                 "submission_id",
@@ -622,9 +983,7 @@ router.get(
         sheetData.push([]);
 
         if (type === "table") {
-          const columns = Array.isArray(snapshot.columns)
-            ? snapshot.columns
-            : [];
+          const columns = getColumnNames(snapshot.columns);
           sheetData.push([
             "Submission ID",
             "Submission Date",
@@ -718,6 +1077,197 @@ router.get(
       res
         .status(500)
         .json({ success: false, error: "Failed to export submissions" });
+    }
+  },
+);
+
+router.get(
+  "/:projectId/superadmin-export",
+  requireRole("superadmin"),
+  async (req, res) => {
+    try {
+      const { projectId } = req.params;
+
+      const result = await pool.query(
+        `SELECT
+           ds.id,
+           ds.project_id,
+           ds.submission_date,
+           ds.status,
+           ds.review_comment,
+           ds.data,
+           ds.template_snapshot,
+           t.name as template_name,
+           u.name as submitted_by_name
+         FROM daily_submissions ds
+         JOIN templates t ON t.id = ds.template_id
+         JOIN users u ON u.id = ds.submitted_by
+         WHERE ds.project_id = $1
+         ORDER BY ds.submission_date ASC, ds.id ASC`,
+        [projectId],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: "No submissions found for export",
+        });
+      }
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "UCAT";
+      workbook.created = new Date();
+
+      const approvedRows = result.rows.filter((row) => row.status === "approved");
+      const rejectedRows = result.rows.filter((row) => row.status === "rejected");
+
+      approvedRows.forEach((submission, index) => {
+        const snapshot = parseJson(submission.template_snapshot, {});
+        const data = parseJson(submission.data, {});
+        const templateType = snapshot.template_type || "form";
+        const sheetName = safeSheetName(
+          `${submission.template_name}_${submission.submitted_by_name}_${submission.submission_date}`,
+          `Approved_${index + 1}`,
+        );
+        const ws = workbook.addWorksheet(sheetName);
+
+        ws.addRow(["Template", submission.template_name || "N/A"]);
+        ws.addRow(["Site Engineer", submission.submitted_by_name || "N/A"]);
+        ws.addRow(["Submission Date", submission.submission_date || "N/A"]);
+        ws.addRow(["Status", submission.status || "approved"]);
+        ws.addRow([]);
+
+        const statusRow = ws.getRow(4);
+        statusRow.getCell(1).font = { bold: true };
+        statusRow.getCell(2).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFC6EFCE" },
+        };
+
+        if (templateType === "table") {
+          const columnDefs = normalizeTemplateColumns(snapshot.columns || data.columns || []);
+          const columns = columnDefs.map((c) => c.name);
+          const restrictedSet = new Set(
+            columnDefs.filter((c) => isRestrictedColumn(c)).map((c) => c.name),
+          );
+
+          ws.addRow(columns);
+          const headerRow = ws.lastRow;
+          headerRow.font = { bold: true };
+
+          const tableRows = Array.isArray(data.rows) ? data.rows : [];
+          tableRows.forEach((r) => {
+            const rowValues = columns.map((c) => {
+              if (restrictedSet.has(c)) return "[RESTRICTED]";
+              return r[c] === undefined || r[c] === null ? "" : String(r[c]);
+            });
+            ws.addRow(rowValues);
+            const row = ws.lastRow;
+            row.eachCell((cell) => {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFE2F0D9" },
+              };
+            });
+          });
+        } else if (Array.isArray(data.fields)) {
+          ws.addRow(["Field", "Value"]);
+          ws.lastRow.font = { bold: true };
+          data.fields.forEach((field) => {
+            const blocked =
+              field &&
+              typeof field === "object" &&
+              (field.isBlocked || field.blocked || String(field.visibility || "").toUpperCase() === "BLOCKED");
+            ws.addRow([
+              field.label || field.name || "Field",
+              blocked ? "[RESTRICTED]" : field.value || "",
+            ]);
+            ws.lastRow.eachCell((cell) => {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFE2F0D9" },
+              };
+            });
+          });
+        } else {
+          ws.addRow(["Data"]);
+          ws.lastRow.font = { bold: true };
+          ws.addRow([JSON.stringify(data)]);
+          ws.lastRow.eachCell((cell) => {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFE2F0D9" },
+            };
+          });
+        }
+
+        ws.columns.forEach((column) => {
+          let maxLength = 10;
+          column.eachCell({ includeEmpty: true }, (cell) => {
+            const len = String(cell.value || "").length;
+            if (len > maxLength) maxLength = len;
+          });
+          column.width = Math.min(40, Math.max(12, maxLength + 2));
+        });
+      });
+
+      if (rejectedRows.length > 0) {
+        const rejectSheet = workbook.addWorksheet("Rejected_Summary");
+        rejectSheet.addRow([
+          "Template",
+          "Site Engineer",
+          "Submission Date",
+          "Status",
+          "Review Comment",
+        ]);
+        rejectSheet.lastRow.font = { bold: true };
+
+        rejectedRows.forEach((row) => {
+          rejectSheet.addRow([
+            row.template_name || "N/A",
+            row.submitted_by_name || "N/A",
+            row.submission_date || "N/A",
+            row.status || "rejected",
+            row.review_comment || "",
+          ]);
+          rejectSheet.lastRow.eachCell((cell) => {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFF8CBAD" },
+            };
+          });
+        });
+
+        rejectSheet.columns.forEach((column) => {
+          let maxLength = 10;
+          column.eachCell({ includeEmpty: true }, (cell) => {
+            const len = String(cell.value || "").length;
+            if (len > maxLength) maxLength = len;
+          });
+          column.width = Math.min(40, Math.max(12, maxLength + 2));
+        });
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="project-${projectId}-superadmin-export.xlsx"`,
+      );
+      res.send(Buffer.from(buffer));
+    } catch (error) {
+      console.error("Error exporting superadmin workbook:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to export project workbook" });
     }
   },
 );
@@ -1046,13 +1596,15 @@ router.post(
         template_type: templateRow.template_type || "form",
         fields: parseJson(templateRow.fields, []),
         rows: parseJson(templateRow.rows, []),
-        columns: parseJson(templateRow.columns, []),
+        columns: normalizeTemplateColumns(parseJson(templateRow.columns, [])),
         row_limit: templateRow.row_limit,
       };
 
       if (!data || typeof data !== "object") {
         return res.status(400).json({ error: "Submission data is required" });
       }
+
+      let sanitizedData = data;
 
       if (templateSnapshot.template_type === "table") {
         const rowData = Array.isArray(data.rows) ? data.rows : [];
@@ -1069,6 +1621,8 @@ router.post(
             .status(400)
             .json({ error: "Row limit exceeded for this template" });
         }
+
+        sanitizedData = applyTableColumnPolicies(data, templateSnapshot);
       } else {
         // FIX: Feature4 - Validate required fields by name/label case-insensitively and support required row cells.
         const missing = extractSubmissionValues(data, templateSnapshot);
@@ -1115,7 +1669,7 @@ router.post(
            WHERE id = $3
            RETURNING *`,
           [
-            JSON.stringify(data),
+            JSON.stringify(sanitizedData),
             JSON.stringify(templateSnapshot),
             originalSubmissionId,
           ],
@@ -1156,7 +1710,7 @@ router.post(
           template_id,
           userId,
           submissionDate,
-          JSON.stringify(data),
+          JSON.stringify(sanitizedData),
           JSON.stringify(templateSnapshot),
         ],
       );

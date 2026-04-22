@@ -1089,7 +1089,7 @@ function loadTemplatesForDropdown() {
     return;
   }
 
-  fetch("/api/templates", {
+  fetch("/api/templates/library?status=pushed", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1166,6 +1166,105 @@ function assignTemplateToProject(
     })
     .catch((error) => {
       console.error("Error assigning template to project:", error);
+    });
+}
+
+function buildProjectOptionsHtml() {
+  const options = (allProjects || [])
+    .filter((project) => !!project && !!project.id)
+    .map(
+      (project) =>
+        `<option value="${project.id}">${project.name || `Project ${project.id}`}</option>`,
+    )
+    .join("");
+
+  return `<option value="">Select project</option>${options}`;
+}
+
+function pushTemplateToProject(templateId, mode) {
+  const token = localStorage.getItem("auth_token");
+  const projectSelect = document.getElementById(`templatePushProject_${templateId}`);
+  const repetitionTypeEl = document.getElementById(
+    `templatePushRepetitionType_${templateId}`,
+  );
+  const repetitionDaysEl = document.getElementById(
+    `templatePushRepetitionDays_${templateId}`,
+  );
+  const scheduledAtEl = document.getElementById(`templatePushSchedule_${templateId}`);
+
+  if (!projectSelect || !projectSelect.value) {
+    showToast("Please select a project to push", "error");
+    return;
+  }
+
+  const payload = {
+    project_id: Number(projectSelect.value),
+    repetition_type: repetitionTypeEl ? repetitionTypeEl.value : "daily",
+    repetition_days: repetitionDaysEl
+      ? repetitionDaysEl.value
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+      : [],
+  };
+
+  if (mode === "schedule") {
+    if (!scheduledAtEl || !scheduledAtEl.value) {
+      showToast("Please pick a future date/time for schedule", "error");
+      return;
+    }
+    payload.scheduled_at = new Date(scheduledAtEl.value).toISOString();
+  }
+
+  fetch(`/api/templates/${templateId}/push`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (!data.success) {
+        showToast(data.error || "Failed to push template", "error");
+        return;
+      }
+      showToast(
+        data.scheduled ? "Template scheduled successfully" : "Template pushed successfully",
+        "success",
+      );
+      loadTemplates();
+    })
+    .catch((error) => {
+      console.error("Error pushing template:", error);
+      showToast("Error pushing template", "error");
+    });
+}
+
+function exportProjectWorkbook(projectId) {
+  const token = localStorage.getItem("auth_token");
+  fetch(`/api/project-templates/${projectId}/superadmin-export`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error("Export failed");
+      return response.blob();
+    })
+    .then((blob) => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `project-${projectId}-superadmin-export.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showToast("Project export downloaded", "success");
+    })
+    .catch((error) => {
+      console.error("Error exporting project workbook:", error);
+      showToast("Failed to export project workbook", "error");
     });
 }
 
@@ -1527,6 +1626,7 @@ function displayOngoingProjects() {
         <!-- View details button -->
         <button class="btn-view-details" onclick="viewProjectDetails(${project.id})">View Details</button>
         <button class="btn-view-details" onclick="openAssignTemplatesModal(${project.id}, '${(project.name || "").replace(/'/g, "\\'")}')">Assign Templates</button>
+        <button class="btn-view-details" onclick="exportProjectWorkbook(${project.id})">Download Excel</button>
       </div>
     `;
     // Append the project card to the container
@@ -1605,6 +1705,7 @@ function displayPastProjects() {
         <!-- View details button -->
         <button class="btn-view-details" onclick="viewProjectDetails(${project.id})">View Details</button>
         <button class="btn-view-details" onclick="openAssignTemplatesModal(${project.id}, '${(project.name || "").replace(/'/g, "\\'")}')">Assign Templates</button>
+        <button class="btn-view-details" onclick="exportProjectWorkbook(${project.id})">Download Excel</button>
       </div>
     `;
     // Append the project card to the container
@@ -2377,6 +2478,131 @@ let templateFieldDraft = {
   options: "",
 };
 
+function normalizeFormulaTypeForDesigner(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "AVG") return "AVERAGE";
+  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeTableColumnsForDesigner(columnsInput) {
+  if (!Array.isArray(columnsInput)) return [];
+
+  return columnsInput
+    .map((column, index) => {
+      if (typeof column === "string") {
+        const name = column.trim();
+        if (!name) return null;
+        return {
+          id: `column_${Date.now()}_${index}`,
+          name,
+          isLocked: false,
+          fixedValue: null,
+          rowFixedValues: {},
+          formulaType: null,
+          formulaExpression: null,
+          formulaScope: "row",
+          formulaSourceColumns: [],
+        };
+      }
+
+      if (!column || typeof column !== "object") return null;
+      const name = String(column.name || "").trim();
+      if (!name) return null;
+
+      return {
+        id: String(column.id || `column_${Date.now()}_${index}`),
+        name,
+        isLocked: !!column.isLocked,
+        fixedValue:
+          column.fixedValue === undefined || column.fixedValue === null
+            ? null
+            : String(column.fixedValue),
+        rowFixedValues:
+          column.rowFixedValues && typeof column.rowFixedValues === "object"
+            ? column.rowFixedValues
+            : {},
+        formulaType: normalizeFormulaTypeForDesigner(column.formulaType),
+        formulaExpression:
+          column.formulaExpression === undefined ||
+          column.formulaExpression === null
+            ? null
+            : String(column.formulaExpression),
+        formulaScope:
+          String(column.formulaScope || "row").toLowerCase() === "column"
+            ? "column"
+            : "row",
+        formulaSourceColumns: Array.isArray(column.formulaSourceColumns)
+          ? column.formulaSourceColumns
+              .map((entry) => String(entry || "").trim())
+              .filter(Boolean)
+          : [],
+      };
+    })
+    .filter(Boolean)
+    .map((column) => ({
+      ...column,
+      isLocked:
+        !!column.isLocked || !!column.formulaType || !!column.formulaExpression,
+    }));
+}
+
+function parseRowFixedValuesInput(raw) {
+  if (!raw || !String(raw).trim()) return {};
+
+  const result = {};
+  String(raw)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .forEach((entry) => {
+      const parts = entry.split(":");
+      if (parts.length !== 2) return;
+      const oneBasedIndex = parseInt(parts[0].trim(), 10);
+      if (!Number.isInteger(oneBasedIndex) || oneBasedIndex <= 0) return;
+      result[String(oneBasedIndex - 1)] = parts[1].trim();
+    });
+
+  return result;
+}
+
+function stringifyRowFixedValues(map) {
+  if (!map || typeof map !== "object") return "";
+  return Object.keys(map)
+    .filter((key) => /^\d+$/.test(key))
+    .sort((a, b) => Number(a) - Number(b))
+    .map((key) => `${Number(key) + 1}:${map[key]}`)
+    .join(", ");
+}
+
+function summarizeTableColumnConfig(column) {
+  const flags = [];
+  if (column.formulaType) {
+    const src = Array.isArray(column.formulaSourceColumns)
+      ? column.formulaSourceColumns.join(", ")
+      : "";
+    flags.push(
+      `Formula ${column.formulaType}${src ? `(${src})` : ""} [${column.formulaScope === "column" ? "across rows" : "per row"}]`,
+    );
+  }
+  if (column.formulaExpression) {
+    flags.push(`Expr ${column.formulaExpression}`);
+  }
+  if (column.isLocked) flags.push("Locked");
+  if (column.fixedValue !== null && column.fixedValue !== undefined && column.fixedValue !== "") {
+    flags.push(`Fixed=${column.fixedValue}`);
+  }
+  const rowFixedSummary = stringifyRowFixedValues(column.rowFixedValues);
+  if (rowFixedSummary) {
+    flags.push(`Row fixed: ${rowFixedSummary}`);
+  }
+  return flags.length > 0 ? flags.join(" | ") : "Editable";
+}
+
 /**
  * Update template type UI - switch between Simple Fields and Rows & Columns
  */
@@ -2549,7 +2775,14 @@ function addTableColumn() {
 
   templateCreationState.columns.push({
     id: "column_" + Date.now(),
-    name: columnName,
+    name: String(columnName).trim(),
+    isLocked: false,
+    fixedValue: null,
+    rowFixedValues: {},
+    formulaType: null,
+    formulaExpression: null,
+    formulaScope: "row",
+    formulaSourceColumns: [],
   });
 
   renderColumnsContainer();
@@ -2583,6 +2816,89 @@ function updateTableColumnName(columnId, newName) {
   }
 }
 
+function configureTableColumn(columnId) {
+  const column = templateCreationState.columns.find((entry) => entry.id === columnId);
+  if (!column) return;
+
+  const lockModeRaw = prompt(
+    `Lock mode for "${column.name}":\n0 = Editable\n1 = Entire column fixed value\n2 = Row-wise fixed values\n(Formula columns are always locked)`,
+    column.formulaType ? "0" : column.fixedValue !== null ? "1" : Object.keys(column.rowFixedValues || {}).length > 0 ? "2" : "0",
+  );
+  if (lockModeRaw === null) return;
+  const lockMode = String(lockModeRaw).trim();
+
+  let fixedValue = null;
+  let rowFixedValues = {};
+  if (lockMode === "1") {
+    const value = prompt(
+      `Fixed value for all rows in "${column.name}":`,
+      column.fixedValue !== null && column.fixedValue !== undefined
+        ? String(column.fixedValue)
+        : "",
+    );
+    if (value === null) return;
+    fixedValue = String(value).trim();
+  } else if (lockMode === "2") {
+    const rowWiseInput = prompt(
+      `Row-wise fixed values for "${column.name}"\nFormat: 1:10, 2:25.5, 3:ABC`,
+      stringifyRowFixedValues(column.rowFixedValues),
+    );
+    if (rowWiseInput === null) return;
+    rowFixedValues = parseRowFixedValuesInput(rowWiseInput);
+  }
+
+  const formulaTypeInput = prompt(
+    `Formula type for "${column.name}"\nLeave empty for none. Supported: SUM, TOTAL, AVERAGE, MIN, MAX`,
+    column.formulaType || "",
+  );
+  if (formulaTypeInput === null) return;
+  const formulaType = normalizeFormulaTypeForDesigner(formulaTypeInput);
+
+  const formulaExpressionInput = prompt(
+    `Formula expression for "${column.name}" (optional)\nExamples: =A1*B1, =SUM(B2:B10), =IF(C3>100,"Over","OK")`,
+    column.formulaExpression || "",
+  );
+  if (formulaExpressionInput === null) return;
+  const formulaExpression = String(formulaExpressionInput).trim() || null;
+
+  let formulaSourceColumns = [];
+  let formulaScope = "row";
+  if (formulaType) {
+    const sourceInput = prompt(
+      `Source columns for ${formulaType} on "${column.name}" (comma-separated names):`,
+      Array.isArray(column.formulaSourceColumns)
+        ? column.formulaSourceColumns.join(", ")
+        : "",
+    );
+    if (sourceInput === null) return;
+    formulaSourceColumns = String(sourceInput)
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .filter((name) => name !== column.name);
+
+    const scopeInput = prompt(
+      `Formula scope for "${column.name}"\nrow = compute per row\ncolumn = aggregate across all rows`,
+      column.formulaScope === "column" ? "column" : "row",
+    );
+    if (scopeInput === null) return;
+    formulaScope = String(scopeInput).trim().toLowerCase() === "column" ? "column" : "row";
+  }
+
+  column.fixedValue = fixedValue;
+  column.rowFixedValues = rowFixedValues;
+  column.formulaType = formulaType;
+  column.formulaExpression = formulaExpression;
+  column.formulaSourceColumns = formulaSourceColumns;
+  column.formulaScope = formulaScope;
+  column.isLocked =
+    !!formulaType || !!formulaExpression || lockMode === "1" || lockMode === "2";
+
+  renderColumnsContainer();
+  updateTemplatePreview();
+  showToast(`Updated configuration for ${column.name}`, "success");
+}
+
 /**
  * Render the table columns container
  */
@@ -2599,10 +2915,19 @@ function renderColumnsContainer() {
   container.innerHTML = templateCreationState.columns
     .map(
       (column) => `
-    <div style="display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
-      <input type="text" value="${column.name}" placeholder="Column name" 
+    <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
+      <div>
+        <input type="text" value="${column.name}" placeholder="Column name" 
         onchange="updateTableColumnName('${column.id}', this.value)"
         style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+        <div style="font-size: 11px; color: #666; margin-top: 6px;">${summarizeTableColumnConfig(column)}</div>
+      </div>
+      <button type="button" onclick="configureTableColumn('${column.id}')" 
+        style="background: #2e7db1; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s;"
+        onmouseover="this.style.background='#1a5490';"
+        onmouseout="this.style.background='#2e7db1';">
+        Configure
+      </button>
       <button type="button" onclick="deleteTableColumn('${column.id}')" 
         style="background: #ff6b6b; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s;"
         onmouseover="this.style.background='#ff5252';"
@@ -2878,6 +3203,7 @@ function saveTemplateToDatabase() {
     .value.trim();
   const isDefault = document.getElementById("isDefaultTemplate").checked;
   const templateType = templateCreationState.templateType;
+  const saveAsDraft = !!document.getElementById("templateSaveAsDraft")?.checked;
   const isEditing = templateCreationState.editingTemplateId;
   const rowLimitRaw = document.getElementById("tableRowLimit")
     ? document.getElementById("tableRowLimit").value
@@ -2912,9 +3238,10 @@ function saveTemplateToDatabase() {
     rows: templateType === "form" ? templateCreationState.rows : [],
     columns:
       templateType === "table"
-        ? templateCreationState.columns.map((column) => column.name)
+        ? normalizeTableColumnsForDesigner(templateCreationState.columns)
         : [],
     row_limit: templateType === "table" ? rowLimit : null,
+    status: saveAsDraft ? "draft" : "pushed",
   };
 
   // Use PUT for updates, POST for new templates
@@ -2944,6 +3271,8 @@ function saveTemplateToDatabase() {
 
       // Reset form
       document.getElementById("createTemplateForm").reset();
+      const draftToggle = document.getElementById("templateSaveAsDraft");
+      if (draftToggle) draftToggle.checked = false;
       templateCreationState = {
         fields: [],
         rows: [],
@@ -2994,7 +3323,11 @@ function loadTemplates() {
   const token = localStorage.getItem("auth_token");
   if (!token) return;
 
-  fetch("/api/templates", {
+  if (!allProjects || allProjects.length === 0) {
+    loadProjects();
+  }
+
+  fetch("/api/templates/library", {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -3037,8 +3370,24 @@ function loadTemplates() {
             <div style="display: flex; gap: 15px; font-size: 12px; color: #999;">
               <span><i class="fas fa-layer-group"></i> ${template.template_type === "table" ? "Table Template" : "Form Template"}</span>
               <span><i class="fas fa-columns"></i> ${template.template_type === "table" ? (template.columns?.length || 0) + " columns" : (template.fields?.length || 0) + " fields"}</span>
+              <span><i class="fas fa-tag"></i> ${template.status || "pushed"}</span>
               <span><i class="fas fa-calendar"></i> ${new Date(template.created_at).toLocaleDateString()}</span>
             </div>
+            <div style="margin-top: 12px; display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr auto auto; gap: 8px; align-items: center;">
+              <select id="templatePushProject_${template.id}" style="padding: 7px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px;">
+                ${buildProjectOptionsHtml()}
+              </select>
+              <select id="templatePushRepetitionType_${template.id}" style="padding: 7px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px;">
+                <option value="daily">daily</option>
+                <option value="weekly">weekly</option>
+                <option value="monthly">monthly</option>
+              </select>
+              <input id="templatePushRepetitionDays_${template.id}" type="text" placeholder="Mon,Tue,Wed" style="padding: 7px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px;" />
+              <input id="templatePushSchedule_${template.id}" type="datetime-local" style="padding: 7px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px;" />
+              <button onclick="pushTemplateToProject(${template.id}, 'schedule')" style="background: #ff9f43; color: white; border: none; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px;">Schedule</button>
+              <button onclick="pushTemplateToProject(${template.id}, 'now')" style="background: #10ac84; color: white; border: none; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px;">Push Now</button>
+            </div>
+            ${template.status === "scheduled" && template.scheduled_at ? `<div style="margin-top: 6px; font-size: 11px; color: #b56f00;">Scheduled at: ${new Date(template.scheduled_at).toLocaleString()}</div>` : ""}
           </div>
           <div style="display: flex; flex-direction: column; gap: 10px;">
             <button onclick="editTemplate(${template.id})" 
@@ -3097,6 +3446,10 @@ function editTemplate(templateId) {
         template.description || "";
       document.getElementById("isDefaultTemplate").checked =
         template.is_default || false;
+      const draftToggle = document.getElementById("templateSaveAsDraft");
+      if (draftToggle) {
+        draftToggle.checked = (template.status || "pushed") === "draft";
+      }
 
       const templateType =
         template.template_type ||
@@ -3109,10 +3462,7 @@ function editTemplate(templateId) {
         templateCreationState = {
           fields: [],
           rows: [],
-          columns: (template.columns || []).map((name) => ({
-            id: "column_" + Date.now() + "_" + Math.random(),
-            name,
-          })),
+          columns: normalizeTableColumnsForDesigner(template.columns || []),
           templateType: "table",
           rowLimit: template.row_limit || null,
           editingTemplateId: templateId,

@@ -159,7 +159,12 @@ function reviewSubmission(submissionId) {
       if (data.success) {
         currentReviewSubmission = data.data;
         renderReviewModal(data.data);
-        document.getElementById("reviewSubmissionModal").style.display = "flex";
+        if (typeof openModal === "function") {
+          openModal("reviewSubmissionModal");
+        } else {
+          document.getElementById("reviewSubmissionModal").style.display =
+            "flex";
+        }
       } else {
         showToast(data.error || "Failed to load submission", "error");
       }
@@ -215,7 +220,13 @@ function renderSubmissionData(submission) {
   const data = submission.data || {};
 
   if (templateType === "table" && Array.isArray(data.rows)) {
-    const columns = snapshot.columns || data.columns || [];
+    const columns = (snapshot.columns || data.columns || [])
+      .map((column) => {
+        if (typeof column === "string") return column;
+        if (column && typeof column === "object") return column.name || "";
+        return "";
+      })
+      .filter(Boolean);
     const header = columns
       .map(
         (col) =>
@@ -432,7 +443,11 @@ function approveSubmission() {
 }
 
 function rejectSubmissionModal() {
-  document.getElementById("rejectReasonModal").style.display = "flex";
+  if (typeof openModal === "function") {
+    openModal("rejectReasonModal");
+  } else {
+    document.getElementById("rejectReasonModal").style.display = "flex";
+  }
 }
 
 function confirmRejection() {

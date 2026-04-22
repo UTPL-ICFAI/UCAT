@@ -24,6 +24,9 @@ async function ensureTemplateTableCompatibility() {
       ADD COLUMN IF NOT EXISTS template_type VARCHAR(20) NOT NULL DEFAULT 'form',
       ADD COLUMN IF NOT EXISTS columns JSONB DEFAULT '[]',
       ADD COLUMN IF NOT EXISTS row_limit INTEGER,
+      ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pushed',
+      ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS scheduled_config JSONB,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
   `);
 
@@ -57,6 +60,134 @@ function parseJson(value, fallback) {
   return value;
 }
 
+function normalizeFormulaType(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "AVG") return "AVERAGE";
+  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeTemplateColumns(columnsInput) {
+  if (!Array.isArray(columnsInput)) return [];
+
+  return columnsInput
+    .map((column, index) => {
+      if (typeof column === "string") {
+        const name = column.trim();
+        if (!name) return null;
+        return {
+          id: `column_${Date.now()}_${index}`,
+          name,
+          isLocked: false,
+          fixedValue: null,
+          rowFixedValues: {},
+          formulaType: null,
+          formulaExpression: null,
+          formulaScope: "row",
+          formulaSourceColumns: [],
+        };
+      }
+
+      if (!column || typeof column !== "object") return null;
+
+      const name = String(column.name || "").trim();
+      if (!name) return null;
+
+      const normalizedFormulaType = normalizeFormulaType(column.formulaType);
+      const sourceColumns = Array.isArray(column.formulaSourceColumns)
+        ? column.formulaSourceColumns
+            .map((entry) => String(entry || "").trim())
+            .filter(Boolean)
+        : [];
+      const rowFixedValues =
+        column.rowFixedValues && typeof column.rowFixedValues === "object"
+          ? column.rowFixedValues
+          : {};
+
+      return {
+        id: String(column.id || `column_${Date.now()}_${index}`),
+        name,
+        isLocked:
+          !!column.isLocked ||
+          !!normalizedFormulaType ||
+          !!column.formulaExpression,
+        fixedValue:
+          column.fixedValue === undefined ? null : String(column.fixedValue),
+        rowFixedValues,
+        formulaType: normalizedFormulaType,
+        formulaExpression:
+          column.formulaExpression === undefined ||
+          column.formulaExpression === null
+            ? null
+            : String(column.formulaExpression),
+        formulaScope:
+          String(column.formulaScope || "row").toLowerCase() === "column"
+            ? "column"
+            : "row",
+        formulaSourceColumns: sourceColumns,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeTemplateStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["draft", "scheduled", "pushed"].includes(normalized)) {
+    return normalized;
+  }
+  return "pushed";
+}
+
+function normalizeRepetitionDays(input) {
+  if (Array.isArray(input)) return input;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      return trimmed
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean);
+    }
+  }
+  return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+}
+
+async function assignTemplateToProjectNow({
+  projectId,
+  templateId,
+  assignedBy,
+  repetitionType,
+  repetitionDays,
+}) {
+  return pool.query(
+    `INSERT INTO project_templates (project_id, template_id, assigned_by, repetition_type, repetition_days, is_active)
+     VALUES ($1, $2, $3, $4, $5, true)
+     ON CONFLICT (project_id, template_id)
+     DO UPDATE SET
+       is_active = true,
+       assigned_by = EXCLUDED.assigned_by,
+       repetition_type = EXCLUDED.repetition_type,
+       repetition_days = EXCLUDED.repetition_days,
+       assigned_at = NOW()
+     RETURNING *`,
+    [
+      projectId,
+      templateId,
+      assignedBy,
+      repetitionType || "daily",
+      JSON.stringify(normalizeRepetitionDays(repetitionDays)),
+    ],
+  );
+}
+
 router.post(
   "/",
   requireRole("site_engineer", "project_manager", "supervisor", "superadmin"),
@@ -71,15 +202,20 @@ router.post(
         template_type,
         columns,
         row_limit,
+        status,
+        scheduled_at,
+        scheduled_config,
       } = req.body;
       const templateType = template_type || "form";
+      const normalizedColumns = normalizeTemplateColumns(columns);
+      const templateStatus = normalizeTemplateStatus(status || "pushed");
 
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });
       }
 
       if (templateType === "table") {
-        if (!columns || columns.length === 0) {
+        if (normalizedColumns.length === 0) {
           return res
             .status(400)
             .json({ error: "Table templates require at least one column" });
@@ -94,9 +230,9 @@ router.post(
       }
 
       const result = await pool.query(
-        `INSERT INTO templates (user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at, updated_at`,
+        `INSERT INTO templates (user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at`,
         [
           req.user.id,
           name,
@@ -104,8 +240,11 @@ router.post(
           templateType,
           JSON.stringify(templateType === "form" ? fields || [] : []),
           JSON.stringify(templateType === "form" ? rows || [] : []),
-          JSON.stringify(templateType === "table" ? columns || [] : []),
+          JSON.stringify(templateType === "table" ? normalizedColumns : []),
           row_limit || null,
+          templateStatus,
+          scheduled_at || null,
+          JSON.stringify(scheduled_config || null),
           is_default || false,
           true,
         ],
@@ -126,6 +265,9 @@ router.post(
           rows: parseJson(template.rows, []),
           columns: parseJson(template.columns, []),
           row_limit: template.row_limit,
+          status: template.status || "pushed",
+          scheduled_at: template.scheduled_at,
+          scheduled_config: parseJson(template.scheduled_config, null),
           is_default: template.is_default,
           is_active: template.is_active,
           created_at: template.created_at,
@@ -139,10 +281,52 @@ router.post(
   },
 );
 
+router.get("/library", requireRole("superadmin"), async (req, res) => {
+  try {
+    const statusFilter = String(req.query.status || "").trim().toLowerCase();
+    const params = [];
+    let query = `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at
+       FROM templates
+       WHERE is_active = true`;
+
+    if (["draft", "scheduled", "pushed"].includes(statusFilter)) {
+      params.push(statusFilter);
+      query += ` AND status = $${params.length}`;
+    }
+
+    query += " ORDER BY updated_at DESC, created_at DESC";
+    const result = await pool.query(query, params);
+
+    const templates = result.rows.map((t) => ({
+      id: t.id,
+      user_id: t.user_id,
+      name: t.name,
+      description: t.description,
+      template_type: t.template_type || "form",
+      fields: parseJson(t.fields, []),
+      rows: parseJson(t.rows, []),
+      columns: parseJson(t.columns, []),
+      row_limit: t.row_limit,
+      status: t.status || "pushed",
+      scheduled_at: t.scheduled_at,
+      scheduled_config: parseJson(t.scheduled_config, null),
+      is_default: t.is_default,
+      is_active: t.is_active,
+      created_at: t.created_at,
+      updated_at: t.updated_at,
+    }));
+
+    res.json({ success: true, templates });
+  } catch (error) {
+    console.error("Error fetching template library:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch template library" });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at, updated_at
+      `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at
        FROM templates
        WHERE is_active = true
        ORDER BY created_at DESC`,
@@ -158,6 +342,9 @@ router.get("/", async (req, res) => {
       rows: parseJson(t.rows, []),
       columns: parseJson(t.columns, []),
       row_limit: t.row_limit,
+      status: t.status || "pushed",
+      scheduled_at: t.scheduled_at,
+      scheduled_config: parseJson(t.scheduled_config, null),
       is_default: t.is_default,
       is_active: t.is_active,
       created_at: t.created_at,
@@ -171,12 +358,111 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.post(
+  "/:templateId/push",
+  requireRole("superadmin"),
+  async (req, res) => {
+    try {
+      const { templateId } = req.params;
+      const projectId = req.body.projectId || req.body.project_id;
+      const repetitionType =
+        req.body.repetitionType || req.body.repetition_type || "daily";
+      const repetitionDays = normalizeRepetitionDays(
+        req.body.repetitionDays || req.body.repetition_days,
+      );
+      const scheduledAt = req.body.scheduledAt || req.body.scheduled_at || null;
+
+      if (!projectId) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Project ID is required for push" });
+      }
+
+      const templateResult = await pool.query(
+        `SELECT id, status, scheduled_at FROM templates WHERE id = $1 AND is_active = true`,
+        [templateId],
+      );
+
+      if (templateResult.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Template not found" });
+      }
+
+      if (scheduledAt) {
+        const scheduledDate = new Date(scheduledAt);
+        if (Number.isNaN(scheduledDate.getTime())) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid scheduled time" });
+        }
+
+        const now = new Date();
+        if (scheduledDate > now) {
+          await pool.query(
+            `UPDATE templates
+             SET status = 'scheduled',
+                 scheduled_at = $1,
+                 scheduled_config = $2,
+                 updated_at = NOW()
+             WHERE id = $3`,
+            [
+              scheduledDate.toISOString(),
+              JSON.stringify({
+                project_id: Number(projectId),
+                repetition_type: repetitionType,
+                repetition_days: repetitionDays,
+                assigned_by: req.user.id,
+              }),
+              templateId,
+            ],
+          );
+
+          return res.json({
+            success: true,
+            scheduled: true,
+            message: "Template push scheduled",
+          });
+        }
+      }
+
+      const assignment = await assignTemplateToProjectNow({
+        projectId: Number(projectId),
+        templateId: Number(templateId),
+        assignedBy: req.user.id,
+        repetitionType,
+        repetitionDays,
+      });
+
+      await pool.query(
+        `UPDATE templates
+         SET status = 'pushed',
+             scheduled_at = NULL,
+             scheduled_config = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [templateId],
+      );
+
+      res.json({
+        success: true,
+        scheduled: false,
+        message: "Template pushed to project",
+        projectTemplate: assignment.rows[0],
+      });
+    } catch (error) {
+      console.error("Error pushing template:", error);
+      res.status(500).json({ success: false, error: "Failed to push template" });
+    }
+  },
+);
+
 // FIX: Feature3 - Add direct get-by-id endpoint to avoid fetching entire template list for edit.
 router.get("/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;
     const result = await pool.query(
-      `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at, updated_at
+      `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at
        FROM templates
        WHERE id = $1 AND is_active = true`,
       [templateId],
@@ -201,6 +487,9 @@ router.get("/:templateId", async (req, res) => {
         rows: parseJson(t.rows, []),
         columns: parseJson(t.columns, []),
         row_limit: t.row_limit,
+        status: t.status || "pushed",
+        scheduled_at: t.scheduled_at,
+        scheduled_config: parseJson(t.scheduled_config, null),
         is_default: t.is_default,
         is_active: t.is_active,
         created_at: t.created_at,
@@ -322,15 +611,20 @@ router.put(
         template_type,
         columns,
         row_limit,
+        status,
+        scheduled_at,
+        scheduled_config,
       } = req.body;
       const templateType = template_type || "form";
+      const normalizedColumns = normalizeTemplateColumns(columns);
+      const templateStatus = normalizeTemplateStatus(status || "pushed");
 
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });
       }
 
       if (templateType === "table") {
-        if (!columns || columns.length === 0) {
+        if (normalizedColumns.length === 0) {
           return res
             .status(400)
             .json({ error: "Table templates require at least one column" });
@@ -354,18 +648,24 @@ router.put(
            rows = $5,
            columns = $6,
            row_limit = $7,
-           is_default = $8,
+             status = $8,
+             scheduled_at = $9,
+             scheduled_config = $10,
+             is_default = $11,
            updated_at = NOW()
-       WHERE id = $9
-       RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, is_default, is_active, created_at, updated_at`,
+           WHERE id = $12
+           RETURNING id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at`,
         [
           name,
           description || null,
           templateType,
           JSON.stringify(templateType === "form" ? fields || [] : []),
           JSON.stringify(templateType === "form" ? rows || [] : []),
-          JSON.stringify(templateType === "table" ? columns || [] : []),
+          JSON.stringify(templateType === "table" ? normalizedColumns : []),
           row_limit || null,
+          templateStatus,
+          scheduled_at || null,
+          JSON.stringify(scheduled_config || null),
           is_default || false,
           templateId,
         ],
@@ -390,6 +690,9 @@ router.put(
           rows: parseJson(template.rows, []),
           columns: parseJson(template.columns, []),
           row_limit: template.row_limit,
+          status: template.status || "pushed",
+          scheduled_at: template.scheduled_at,
+          scheduled_config: parseJson(template.scheduled_config, null),
           is_default: template.is_default,
           is_active: template.is_active,
           created_at: template.created_at,

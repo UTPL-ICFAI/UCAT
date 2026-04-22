@@ -45,13 +45,325 @@ function normalizeTemplate(template) {
   const templateType =
     template.template_type ||
     (template.columns && template.columns.length > 0 ? "table" : "form");
+  const detailedColumns = normalizeTableColumns(template.columns);
   return {
     ...template,
     template_type: templateType,
     fields: Array.isArray(template.fields) ? template.fields : [],
     rows: Array.isArray(template.rows) ? template.rows : [],
-    columns: Array.isArray(template.columns) ? template.columns : [],
+    columns: detailedColumns,
   };
+}
+
+function normalizeFormulaType(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "AVG") return "AVERAGE";
+  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeTableColumns(columnsInput) {
+  if (!Array.isArray(columnsInput)) return [];
+
+  return columnsInput
+    .map((column, index) => {
+      if (typeof column === "string") {
+        const name = column.trim();
+        if (!name) return null;
+        return {
+          id: `column_${Date.now()}_${index}`,
+          name,
+          isLocked: false,
+          fixedValue: null,
+          rowFixedValues: {},
+          formulaType: null,
+          formulaExpression: null,
+          formulaScope: "row",
+          formulaSourceColumns: [],
+        };
+      }
+
+      if (!column || typeof column !== "object") return null;
+      const name = String(column.name || "").trim();
+      if (!name) return null;
+
+      return {
+        id: String(column.id || `column_${Date.now()}_${index}`),
+        name,
+        isLocked: !!column.isLocked,
+        fixedValue:
+          column.fixedValue === undefined || column.fixedValue === null
+            ? null
+            : String(column.fixedValue),
+        rowFixedValues:
+          column.rowFixedValues && typeof column.rowFixedValues === "object"
+            ? column.rowFixedValues
+            : {},
+        formulaType: normalizeFormulaType(column.formulaType),
+        formulaExpression:
+          column.formulaExpression === undefined ||
+          column.formulaExpression === null
+            ? null
+            : String(column.formulaExpression),
+        formulaScope:
+          String(column.formulaScope || "row").toLowerCase() === "column"
+            ? "column"
+            : "row",
+        formulaSourceColumns: Array.isArray(column.formulaSourceColumns)
+          ? column.formulaSourceColumns
+              .map((entry) => String(entry || "").trim())
+              .filter(Boolean)
+          : [],
+      };
+    })
+    .filter(Boolean)
+    .map((column) => ({
+      ...column,
+      isLocked:
+        !!column.isLocked || !!column.formulaType || !!column.formulaExpression,
+    }));
+}
+
+function getTemplateColumns() {
+  const template = currentSubmissionContext.template || {};
+  return normalizeTableColumns(template.columns);
+}
+
+function toNumeric(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function aggregateFormula(values, formulaType) {
+  if (!Array.isArray(values) || values.length === 0) return "";
+
+  switch (formulaType) {
+    case "SUM":
+    case "TOTAL":
+      return String(values.reduce((acc, item) => acc + item, 0));
+    case "AVERAGE":
+      return String(values.reduce((acc, item) => acc + item, 0) / values.length);
+    case "MIN":
+      return String(Math.min(...values));
+    case "MAX":
+      return String(Math.max(...values));
+    default:
+      return "";
+  }
+}
+
+function letterToIndex(letters) {
+  let index = 0;
+  String(letters || "")
+    .toUpperCase()
+    .split("")
+    .forEach((char) => {
+      index = index * 26 + (char.charCodeAt(0) - 64);
+    });
+  return Math.max(0, index - 1);
+}
+
+function valueForFormulaRef(token, rowIndex, rows, columns) {
+  const match = String(token || "").toUpperCase().match(/^([A-Z]+)(\d+)?$/);
+  if (!match) return null;
+  const colIdx = letterToIndex(match[1]);
+  const col = columns[colIdx];
+  if (!col) return null;
+  const targetRowIdx = match[2] ? parseInt(match[2], 10) - 1 : rowIndex;
+  const row = rows[targetRowIdx];
+  if (!row) return null;
+  const input = row.querySelector(`input[data-column="${col.name}"]`);
+  if (!input) return null;
+  return toNumeric(input.value);
+}
+
+function evaluateFormulaExpression(expression, rowIndex, rows, columns) {
+  const raw = String(expression || "").trim();
+  if (!raw) return "";
+  const expr = raw.startsWith("=") ? raw.slice(1).trim() : raw;
+
+  const ifMatch = expr.match(/^IF\((.+),(.+),(.+)\)$/i);
+  if (ifMatch) {
+    const condition = ifMatch[1]
+      .replace(/([A-Z]+\d*)/g, (token) => {
+        const value = valueForFormulaRef(token, rowIndex, rows, columns);
+        return value === null ? "0" : String(value);
+      })
+      .replace(/=/g, "==")
+      .replace(/>==/g, ">=")
+      .replace(/<==/g, "<=")
+      .replace(/!==/g, "!=");
+
+    let pass = false;
+    try {
+      pass = !!Function(`return (${condition});`)();
+    } catch (error) {
+      pass = false;
+    }
+    const trueValue = ifMatch[2].trim().replace(/^"|"$/g, "");
+    const falseValue = ifMatch[3].trim().replace(/^"|"$/g, "");
+    return pass ? trueValue : falseValue;
+  }
+
+  const sumMatch = expr.match(/^SUM\(([A-Z]+\d*):([A-Z]+\d*)\)$/i);
+  if (sumMatch) {
+    const startCell = String(sumMatch[1]).toUpperCase();
+    const endCell = String(sumMatch[2]).toUpperCase();
+    const startCol = letterToIndex(startCell.match(/^([A-Z]+)/)[1]);
+    const endCol = letterToIndex(endCell.match(/^([A-Z]+)/)[1]);
+    const startRow = startCell.match(/(\d+)$/)
+      ? parseInt(startCell.match(/(\d+)$/)[1], 10) - 1
+      : 0;
+    const endRow = endCell.match(/(\d+)$/)
+      ? parseInt(endCell.match(/(\d+)$/)[1], 10) - 1
+      : rows.length - 1;
+
+    let total = 0;
+    for (let r = Math.max(0, startRow); r <= Math.min(endRow, rows.length - 1); r += 1) {
+      for (let c = Math.max(0, startCol); c <= Math.min(endCol, columns.length - 1); c += 1) {
+        const col = columns[c];
+        if (!col) continue;
+        const input = rows[r].querySelector(`input[data-column="${col.name}"]`);
+        if (!input) continue;
+        const numeric = toNumeric(input.value);
+        if (numeric !== null) total += numeric;
+      }
+    }
+    return String(total);
+  }
+
+  const arithmetic = expr.replace(/([A-Z]+\d*)/g, (token) => {
+    const value = valueForFormulaRef(token, rowIndex, rows, columns);
+    return value === null ? "0" : String(value);
+  });
+
+  try {
+    const result = Function(`return (${arithmetic});`)();
+    if (result === null || result === undefined || Number.isNaN(result)) return "";
+    return String(result);
+  } catch (error) {
+    return "";
+  }
+}
+
+function applyColumnPoliciesToRow(tr, rowIndex) {
+  const columns = getTemplateColumns();
+
+  columns.forEach((column) => {
+    const input = tr.querySelector(`input[data-column="${column.name}"]`);
+    if (!input) return;
+
+    const rowFixedValues = column.rowFixedValues || {};
+    const hasRowFixed = Object.prototype.hasOwnProperty.call(
+      rowFixedValues,
+      String(rowIndex),
+    );
+
+    let enforcedValue = null;
+    if (hasRowFixed) {
+      enforcedValue = rowFixedValues[String(rowIndex)];
+    } else if (
+      column.fixedValue !== null &&
+      column.fixedValue !== undefined &&
+      column.fixedValue !== ""
+    ) {
+      enforcedValue = column.fixedValue;
+    }
+
+    if (enforcedValue !== null && enforcedValue !== undefined) {
+      input.value = String(enforcedValue);
+    }
+
+    const shouldDisable = !!column.formulaType || !!column.isLocked;
+    input.disabled = shouldDisable;
+    input.style.background = shouldDisable ? "#f3f4f6" : "";
+    input.style.cursor = shouldDisable ? "not-allowed" : "";
+  });
+}
+
+function reindexTemplateTableRows() {
+  const tableBody = document.getElementById("templateTableBody");
+  if (!tableBody) return;
+
+  Array.from(tableBody.querySelectorAll("tr")).forEach((tr, rowIndex) => {
+    tr.querySelectorAll("input[data-column]").forEach((input) => {
+      input.setAttribute("data-row-index", String(rowIndex));
+    });
+    applyColumnPoliciesToRow(tr, rowIndex);
+  });
+}
+
+function recomputeTemplateTableFormulas() {
+  const tableBody = document.getElementById("templateTableBody");
+  if (!tableBody) return;
+
+  const rows = Array.from(tableBody.querySelectorAll("tr"));
+  const columns = getTemplateColumns();
+  const columnNames = columns.map((column) => column.name);
+
+  columns.forEach((column) => {
+    if (!column.formulaType) return;
+
+    const sources = Array.isArray(column.formulaSourceColumns)
+      ? column.formulaSourceColumns.filter(Boolean)
+      : [];
+    const effectiveSources =
+      sources.length > 0
+        ? sources
+        : columnNames.filter((name) => name !== column.name);
+
+    if (column.formulaScope === "column") {
+      const acrossValues = [];
+      rows.forEach((tr) => {
+        effectiveSources.forEach((source) => {
+          const sourceInput = tr.querySelector(`input[data-column="${source}"]`);
+          if (!sourceInput) return;
+          const numeric = toNumeric(sourceInput.value);
+          if (numeric !== null) acrossValues.push(numeric);
+        });
+      });
+
+      const aggregate = aggregateFormula(acrossValues, column.formulaType);
+      rows.forEach((tr) => {
+        const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
+        if (formulaInput) formulaInput.value = aggregate;
+      });
+      return;
+    }
+
+    rows.forEach((tr) => {
+      const perRowValues = effectiveSources
+        .map((source) => {
+          const sourceInput = tr.querySelector(`input[data-column="${source}"]`);
+          return sourceInput ? toNumeric(sourceInput.value) : null;
+        })
+        .filter((value) => value !== null);
+
+      const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
+      if (formulaInput) {
+        formulaInput.value = aggregateFormula(perRowValues, column.formulaType);
+      }
+    });
+  });
+
+  columns.forEach((column) => {
+    if (!column.formulaExpression) return;
+    rows.forEach((tr, rowIndex) => {
+      const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
+      if (!formulaInput) return;
+      formulaInput.value = evaluateFormulaExpression(
+        column.formulaExpression,
+        rowIndex,
+        rows,
+        columns,
+      );
+    });
+  });
 }
 
 /**
@@ -200,7 +512,7 @@ function renderTemplateForm() {
  * Render table-based template (columns + rows)
  */
 function renderTableTemplate(template) {
-  const columns = Array.isArray(template.columns) ? template.columns : [];
+  const columns = getTemplateColumns();
   const rowLimit = template.row_limit || null;
 
   let html = `
@@ -212,7 +524,19 @@ function renderTableTemplate(template) {
       <table style="width: 100%; border-collapse: collapse;" id="templateTable">
         <thead>
           <tr style="background: #f0f0f0;">
-            ${columns.map((col) => `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${col}</th>`).join("")}
+            ${columns
+              .map((col) => {
+                const meta = [];
+                if (col.formulaType) {
+                  meta.push(`${col.formulaType}${col.formulaScope === "column" ? " (across rows)" : ""}`);
+                }
+                if (col.formulaExpression) {
+                  meta.push(`expr`);
+                }
+                if (col.isLocked) meta.push("locked");
+                return `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${col.name}${meta.length > 0 ? `<div style="font-size: 10px; color: #666; font-weight: 500; margin-top: 2px;">${meta.join(" | ")}</div>` : ""}</th>`;
+              })
+              .join("")}
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600; font-size: 12px;">Action</th>
           </tr>
         </thead>
@@ -226,7 +550,7 @@ function renderTableTemplate(template) {
 
 function addTemplateTableRow() {
   const template = currentSubmissionContext.template;
-  const columns = Array.isArray(template.columns) ? template.columns : [];
+  const columns = getTemplateColumns();
   const rowLimit = template.row_limit || null;
   const tableBody = document.getElementById("templateTableBody");
   if (!tableBody) return;
@@ -243,17 +567,27 @@ function addTemplateTableRow() {
       .map(
         (col) => `
       <td style="padding: 8px; border: 1px solid #ddd;">
-        <input type="text" class="form-control" data-column="${col}" data-row-index="${rowIndex}" />
+        <input type="text" class="form-control" data-column="${col.name}" data-row-index="${rowIndex}" oninput="recomputeTemplateTableFormulas()" />
       </td>
     `,
       )
       .join("")}
     <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">
-      <button type="button" class="btn btn-small btn-danger" onclick="this.closest('tr').remove()">Remove</button>
+      <button type="button" class="btn btn-small btn-danger" onclick="removeTemplateTableRow(this)">Remove</button>
     </td>
   `;
 
   tableBody.appendChild(row);
+  applyColumnPoliciesToRow(row, rowIndex);
+  recomputeTemplateTableFormulas();
+}
+
+function removeTemplateTableRow(buttonEl) {
+  const tr = buttonEl && typeof buttonEl.closest === "function" ? buttonEl.closest("tr") : null;
+  if (!tr) return;
+  tr.remove();
+  reindexTemplateTableRows();
+  recomputeTemplateTableFormulas();
 }
 
 /**
@@ -372,8 +706,11 @@ function handleTemplateSubmit(e) {
   const data = {};
 
   if (template.template_type === "table") {
+    recomputeTemplateTableFormulas();
     const tableBody = document.getElementById("templateTableBody");
     const rows = [];
+    const columns = getTemplateColumns();
+    const columnNames = columns.map((column) => column.name);
 
     if (tableBody) {
       Array.from(tableBody.querySelectorAll("tr")).forEach((row) => {
@@ -387,6 +724,12 @@ function handleTemplateSubmit(e) {
           if (String(value).trim() !== "") hasValue = true;
         });
 
+        columnNames.forEach((columnName) => {
+          if (!Object.prototype.hasOwnProperty.call(rowData, columnName)) {
+            rowData[columnName] = "";
+          }
+        });
+
         if (hasValue) rows.push(rowData);
       });
     }
@@ -396,7 +739,7 @@ function handleTemplateSubmit(e) {
       return;
     }
 
-    data.columns = template.columns || [];
+    data.columns = columnNames;
     data.rows = rows;
   } else {
     const fields = [];
@@ -598,7 +941,9 @@ function renderSubmissionData(submission) {
   const data = submission.data || {};
 
   if (templateType === "table" && Array.isArray(data.rows)) {
-    const columns = snapshot.columns || data.columns || [];
+    const columns = normalizeTableColumns(snapshot.columns || data.columns || []).map(
+      (column) => column.name,
+    );
     const headerCells = columns
       .map(
         (col) =>
@@ -802,6 +1147,8 @@ function prefillTemplateFormFromSubmission(submission) {
           input.value = rowObj[col] || "";
         });
       });
+      reindexTemplateTableRows();
+      recomputeTemplateTableFormulas();
     }
   }
 }
