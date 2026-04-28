@@ -222,22 +222,27 @@ function renderSubmissionData(submission) {
   if (templateType === "table" && Array.isArray(data.rows)) {
     const columns = (snapshot.columns || data.columns || [])
       .map((column) => {
-        if (typeof column === "string") return column;
-        if (column && typeof column === "object") return column.name || "";
-        return "";
+        if (typeof column === "string") return { name: column, isLocked: false };
+        if (column && typeof column === "object") return { name: column.name || "", isLocked: !!column.isLocked };
+        return { name: "", isLocked: false };
       })
-      .filter(Boolean);
+      .filter((c) => c.name);
+
     const header = columns
       .map(
         (col) =>
-          `<th style="padding: 10px; text-align: left; border: 1px solid #ddd;">${col}</th>`,
+          `<th style="padding: 10px; text-align: left; border: 1px solid #ddd; color: #333;">${col.name}</th>`,
       )
       .join("");
     const body = data.rows
       .map(
         (row) => `
       <tr>
-        ${columns.map((col) => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ""}</td>`).join("")}
+        ${columns.map((col) => {
+          const bgColor = col.isLocked ? "#FFCDD2" : "#FFFFFF";
+          const color = col.isLocked ? "#333" : "black";
+          return `<td style="padding: 8px; border: 1px solid #ddd; background-color: ${bgColor}; color: ${color};">${row[col.name] === null || row[col.name] === undefined || row[col.name] === "null" ? "" : row[col.name]}</td>`;
+        }).join("")}
       </tr>
     `,
       )
@@ -246,7 +251,7 @@ function renderSubmissionData(submission) {
     return `
       <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">
         <table style="width: 100%; border-collapse: collapse;">
-          <thead><tr style="background: #e0e0e0;">${header}</tr></thead>
+          <thead><tr style="background: #FFF9C4;">${header}</tr></thead>
           <tbody>${body}</tbody>
         </table>
       </div>

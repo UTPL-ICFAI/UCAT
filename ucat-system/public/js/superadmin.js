@@ -2478,16 +2478,6 @@ let templateFieldDraft = {
   options: "",
 };
 
-function normalizeFormulaTypeForDesigner(value) {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  if (!normalized) return null;
-  if (normalized === "AVG") return "AVERAGE";
-  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
-    return normalized;
-  }
-  return null;
-}
 
 function normalizeTableColumnsForDesigner(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
@@ -2503,10 +2493,6 @@ function normalizeTableColumnsForDesigner(columnsInput) {
           isLocked: false,
           fixedValue: null,
           rowFixedValues: {},
-          formulaType: null,
-          formulaExpression: null,
-          formulaScope: "row",
-          formulaSourceColumns: [],
         };
       }
 
@@ -2526,28 +2512,12 @@ function normalizeTableColumnsForDesigner(columnsInput) {
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
-        formulaType: normalizeFormulaTypeForDesigner(column.formulaType),
-        formulaExpression:
-          column.formulaExpression === undefined ||
-          column.formulaExpression === null
-            ? null
-            : String(column.formulaExpression),
-        formulaScope:
-          String(column.formulaScope || "row").toLowerCase() === "column"
-            ? "column"
-            : "row",
-        formulaSourceColumns: Array.isArray(column.formulaSourceColumns)
-          ? column.formulaSourceColumns
-              .map((entry) => String(entry || "").trim())
-              .filter(Boolean)
-          : [],
       };
     })
     .filter(Boolean)
     .map((column) => ({
       ...column,
-      isLocked:
-        !!column.isLocked || !!column.formulaType || !!column.formulaExpression,
+      isLocked: !!column.isLocked,
     }));
 }
 
@@ -2581,17 +2551,7 @@ function stringifyRowFixedValues(map) {
 
 function summarizeTableColumnConfig(column) {
   const flags = [];
-  if (column.formulaType) {
-    const src = Array.isArray(column.formulaSourceColumns)
-      ? column.formulaSourceColumns.join(", ")
-      : "";
-    flags.push(
-      `Formula ${column.formulaType}${src ? `(${src})` : ""} [${column.formulaScope === "column" ? "across rows" : "per row"}]`,
-    );
-  }
-  if (column.formulaExpression) {
-    flags.push(`Expr ${column.formulaExpression}`);
-  }
+
   if (column.isLocked) flags.push("Locked");
   if (column.fixedValue !== null && column.fixedValue !== undefined && column.fixedValue !== "") {
     flags.push(`Fixed=${column.fixedValue}`);
@@ -2779,10 +2739,6 @@ function addTableColumn() {
     isLocked: false,
     fixedValue: null,
     rowFixedValues: {},
-    formulaType: null,
-    formulaExpression: null,
-    formulaScope: "row",
-    formulaSourceColumns: [],
   });
 
   renderColumnsContainer();
@@ -2821,8 +2777,8 @@ function configureTableColumn(columnId) {
   if (!column) return;
 
   const lockModeRaw = prompt(
-    `Lock mode for "${column.name}":\n0 = Editable\n1 = Entire column fixed value\n2 = Row-wise fixed values\n(Formula columns are always locked)`,
-    column.formulaType ? "0" : column.fixedValue !== null ? "1" : Object.keys(column.rowFixedValues || {}).length > 0 ? "2" : "0",
+    `Lock mode for "${column.name}":\n0 = Editable\n1 = Entire column fixed value\n2 = Row-wise fixed values`,
+    column.fixedValue !== null ? "1" : Object.keys(column.rowFixedValues || {}).length > 0 ? "2" : "0",
   );
   if (lockModeRaw === null) return;
   const lockMode = String(lockModeRaw).trim();
@@ -2847,52 +2803,9 @@ function configureTableColumn(columnId) {
     rowFixedValues = parseRowFixedValuesInput(rowWiseInput);
   }
 
-  const formulaTypeInput = prompt(
-    `Formula type for "${column.name}"\nLeave empty for none. Supported: SUM, TOTAL, AVERAGE, MIN, MAX`,
-    column.formulaType || "",
-  );
-  if (formulaTypeInput === null) return;
-  const formulaType = normalizeFormulaTypeForDesigner(formulaTypeInput);
-
-  const formulaExpressionInput = prompt(
-    `Formula expression for "${column.name}" (optional)\nExamples: =A1*B1, =SUM(B2:B10), =IF(C3>100,"Over","OK")`,
-    column.formulaExpression || "",
-  );
-  if (formulaExpressionInput === null) return;
-  const formulaExpression = String(formulaExpressionInput).trim() || null;
-
-  let formulaSourceColumns = [];
-  let formulaScope = "row";
-  if (formulaType) {
-    const sourceInput = prompt(
-      `Source columns for ${formulaType} on "${column.name}" (comma-separated names):`,
-      Array.isArray(column.formulaSourceColumns)
-        ? column.formulaSourceColumns.join(", ")
-        : "",
-    );
-    if (sourceInput === null) return;
-    formulaSourceColumns = String(sourceInput)
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .filter((name) => name !== column.name);
-
-    const scopeInput = prompt(
-      `Formula scope for "${column.name}"\nrow = compute per row\ncolumn = aggregate across all rows`,
-      column.formulaScope === "column" ? "column" : "row",
-    );
-    if (scopeInput === null) return;
-    formulaScope = String(scopeInput).trim().toLowerCase() === "column" ? "column" : "row";
-  }
-
   column.fixedValue = fixedValue;
   column.rowFixedValues = rowFixedValues;
-  column.formulaType = formulaType;
-  column.formulaExpression = formulaExpression;
-  column.formulaSourceColumns = formulaSourceColumns;
-  column.formulaScope = formulaScope;
-  column.isLocked =
-    !!formulaType || !!formulaExpression || lockMode === "1" || lockMode === "2";
+  column.isLocked = lockMode === "1" || lockMode === "2";
 
   renderColumnsContainer();
   updateTemplatePreview();

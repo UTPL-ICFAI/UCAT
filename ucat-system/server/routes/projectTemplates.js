@@ -139,16 +139,7 @@ function parseJson(value, fallback) {
   return value;
 }
 
-function normalizeFormulaType(value) {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  if (!normalized) return null;
-  if (normalized === "AVG") return "AVERAGE";
-  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
-    return normalized;
-  }
-  return null;
-}
+
 
 function normalizeTemplateColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
@@ -162,12 +153,8 @@ function normalizeTemplateColumns(columnsInput) {
           id: `column_${Date.now()}_${index}`,
           name,
           isLocked: false,
-          fixedValue: null,
+          fixedValue: "",
           rowFixedValues: {},
-          formulaType: null,
-          formulaExpression: null,
-          formulaScope: "row",
-          formulaSourceColumns: [],
         };
       }
 
@@ -176,37 +163,20 @@ function normalizeTemplateColumns(columnsInput) {
       const name = String(column.name || "").trim();
       if (!name) return null;
 
-      const normalizedFormulaType = normalizeFormulaType(column.formulaType);
-      const sourceColumns = Array.isArray(column.formulaSourceColumns)
-        ? column.formulaSourceColumns
-            .map((entry) => String(entry || "").trim())
-            .filter(Boolean)
-        : [];
+      const fVal = column.fixedValue;
 
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
-        isLocked:
-          !!column.isLocked ||
-          !!normalizedFormulaType ||
-          !!column.formulaExpression,
+        isLocked: !!column.isLocked,
         fixedValue:
-          column.fixedValue === undefined ? null : String(column.fixedValue),
+          fVal === undefined || fVal === null || fVal === "null"
+            ? ""
+            : String(fVal),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
-        formulaType: normalizedFormulaType,
-        formulaExpression:
-          column.formulaExpression === undefined ||
-          column.formulaExpression === null
-            ? null
-            : String(column.formulaExpression),
-        formulaScope:
-          String(column.formulaScope || "row").toLowerCase() === "column"
-            ? "column"
-            : "row",
-        formulaSourceColumns: sourceColumns,
       };
     })
     .filter(Boolean);
@@ -216,124 +186,8 @@ function getColumnNames(columnsInput) {
   return normalizeTemplateColumns(columnsInput).map((column) => column.name);
 }
 
-function toNumberOrNull(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function aggregateNumbers(values, formulaType) {
-  if (!Array.isArray(values) || values.length === 0) return "";
-
-  switch (formulaType) {
-    case "SUM":
-    case "TOTAL":
-      return values.reduce((acc, item) => acc + item, 0);
-    case "AVERAGE":
-      return values.reduce((acc, item) => acc + item, 0) / values.length;
-    case "MIN":
-      return Math.min(...values);
-    case "MAX":
-      return Math.max(...values);
-    default:
-      return "";
-  }
-}
-
-function letterToIndex(letters) {
-  let index = 0;
-  String(letters || "")
-    .toUpperCase()
-    .split("")
-    .forEach((char) => {
-      index = index * 26 + (char.charCodeAt(0) - 64);
-    });
-  return Math.max(0, index - 1);
-}
-
-function valueForCellRef(cellRef, rowIndex, rows, columnDefs) {
-  const match = String(cellRef || "").toUpperCase().match(/^([A-Z]+)(\d+)?$/);
-  if (!match) return null;
-  const colIdx = letterToIndex(match[1]);
-  const targetColumn = columnDefs[colIdx];
-  if (!targetColumn) return null;
-  const explicitRow = match[2] ? parseInt(match[2], 10) - 1 : rowIndex;
-  const targetRow = rows[explicitRow];
-  if (!targetRow) return null;
-  return toNumberOrNull(targetRow[targetColumn.name]);
-}
-
-function evaluateFormulaExpression(expression, rowIndex, rows, columnDefs) {
-  const raw = String(expression || "").trim();
-  if (!raw) return "";
-  const expr = raw.startsWith("=") ? raw.slice(1).trim() : raw;
-
-  const ifMatch = expr.match(/^IF\((.+),(.+),(.+)\)$/i);
-  if (ifMatch) {
-    const condition = ifMatch[1]
-      .replace(/([A-Z]+\d*)/g, (token) => {
-        const value = valueForCellRef(token, rowIndex, rows, columnDefs);
-        return value === null ? "0" : String(value);
-      })
-      .replace(/=/g, "==")
-      .replace(/>==/g, ">=")
-      .replace(/<==/g, "<=")
-      .replace(/!==/g, "!=");
-
-    let conditionResult = false;
-    try {
-      conditionResult = !!Function(`return (${condition});`)();
-    } catch (error) {
-      conditionResult = false;
-    }
-
-    const trueValue = ifMatch[2].trim().replace(/^"|"$/g, "");
-    const falseValue = ifMatch[3].trim().replace(/^"|"$/g, "");
-    return conditionResult ? trueValue : falseValue;
-  }
-
-  const sumMatch = expr.match(/^SUM\(([A-Z]+\d*):([A-Z]+\d*)\)$/i);
-  if (sumMatch) {
-    const startCell = String(sumMatch[1]).toUpperCase();
-    const endCell = String(sumMatch[2]).toUpperCase();
-    const startCol = letterToIndex(startCell.match(/^([A-Z]+)/)[1]);
-    const endCol = letterToIndex(endCell.match(/^([A-Z]+)/)[1]);
-    const startRow = startCell.match(/(\d+)$/)
-      ? parseInt(startCell.match(/(\d+)$/)[1], 10) - 1
-      : 0;
-    const endRow = endCell.match(/(\d+)$/)
-      ? parseInt(endCell.match(/(\d+)$/)[1], 10) - 1
-      : rows.length - 1;
-
-    let total = 0;
-    for (let r = Math.max(0, startRow); r <= Math.min(endRow, rows.length - 1); r += 1) {
-      for (let c = Math.max(0, startCol); c <= Math.min(endCol, columnDefs.length - 1); c += 1) {
-        const column = columnDefs[c];
-        if (!column) continue;
-        const numeric = toNumberOrNull(rows[r][column.name]);
-        if (numeric !== null) total += numeric;
-      }
-    }
-    return String(total);
-  }
-
-  const arithmetic = expr.replace(/([A-Z]+\d*)/g, (token) => {
-    const value = valueForCellRef(token, rowIndex, rows, columnDefs);
-    return value === null ? "0" : String(value);
-  });
-
-  try {
-    const result = Function(`return (${arithmetic});`)();
-    if (result === null || result === undefined || Number.isNaN(result)) return "";
-    return String(result);
-  } catch (error) {
-    return "";
-  }
-}
-
 function applyTableColumnPolicies(data, templateSnapshot) {
   const columnDefs = normalizeTemplateColumns(templateSnapshot.columns);
-  const columnNames = columnDefs.map((column) => column.name);
   const incomingRows = Array.isArray(data?.rows) ? data.rows : [];
 
   const sanitizedRows = incomingRows.map((row, rowIndex) => {
@@ -346,81 +200,24 @@ function applyTableColumnPolicies(data, templateSnapshot) {
           ? column.rowFixedValues[String(rowIndex)]
           : null;
 
-      if (rowFixedCandidate !== null && rowFixedCandidate !== undefined) {
+      if (rowFixedCandidate !== null && rowFixedCandidate !== undefined && rowFixedCandidate !== "" && rowFixedCandidate !== "null") {
         nextRow[column.name] = String(rowFixedCandidate);
         return;
       }
 
-      if (column.fixedValue !== null && column.fixedValue !== undefined) {
+      if (column.fixedValue !== "") {
         nextRow[column.name] = String(column.fixedValue);
         return;
       }
 
-      if (column.formulaType) {
-        nextRow[column.name] = "";
-        return;
-      }
-
       const rawValue = row && typeof row === "object" ? row[column.name] : "";
-      nextRow[column.name] = rawValue === undefined || rawValue === null ? "" : String(rawValue);
+      nextRow[column.name] = rawValue === undefined || rawValue === null || rawValue === "null" ? "" : String(rawValue);
     });
 
     return nextRow;
   });
 
-  // Recompute formula columns after all rows are normalized.
-  columnDefs.forEach((column) => {
-    if (!column.formulaType) return;
-    const sourceColumns = Array.isArray(column.formulaSourceColumns)
-      ? column.formulaSourceColumns.filter(Boolean)
-      : [];
-    const effectiveSources =
-      sourceColumns.length > 0
-        ? sourceColumns
-        : columnNames.filter((name) => name !== column.name);
-
-    if (column.formulaScope === "column") {
-      const allValues = [];
-      sanitizedRows.forEach((row) => {
-        effectiveSources.forEach((source) => {
-          const numericValue = toNumberOrNull(row[source]);
-          if (numericValue !== null) allValues.push(numericValue);
-        });
-      });
-
-      const aggregate = aggregateNumbers(allValues, column.formulaType);
-      sanitizedRows.forEach((row) => {
-        row[column.name] = aggregate === "" ? "" : String(aggregate);
-      });
-      return;
-    }
-
-    sanitizedRows.forEach((row) => {
-      const rowValues = effectiveSources
-        .map((source) => toNumberOrNull(row[source]))
-        .filter((value) => value !== null);
-      const aggregate = aggregateNumbers(rowValues, column.formulaType);
-      row[column.name] = aggregate === "" ? "" : String(aggregate);
-    });
-  });
-
-  columnDefs.forEach((column) => {
-    if (!column.formulaExpression) return;
-    sanitizedRows.forEach((row, rowIndex) => {
-      row[column.name] = evaluateFormulaExpression(
-        column.formulaExpression,
-        rowIndex,
-        sanitizedRows,
-        columnDefs,
-      );
-    });
-  });
-
-  return {
-    ...data,
-    columns: columnNames,
-    rows: sanitizedRows,
-  };
+  return { ...data, rows: sanitizedRows };
 }
 
 function normalizeRepetitionDays(input) {
@@ -1155,6 +952,17 @@ router.get(
           ws.addRow(columns);
           const headerRow = ws.lastRow;
           headerRow.font = { bold: true };
+          headerRow.eachCell((cell) => {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFFFF9C4" },
+            };
+          });
+
+          const lockedColumns = new Set(
+            columnDefs.filter((c) => c.isLocked).map((c) => c.name),
+          );
 
           const tableRows = Array.isArray(data.rows) ? data.rows : [];
           tableRows.forEach((r) => {
@@ -1164,12 +972,17 @@ router.get(
             });
             ws.addRow(rowValues);
             const row = ws.lastRow;
-            row.eachCell((cell) => {
+            row.eachCell((cell, colNumber) => {
+              const colName = columns[colNumber - 1];
+              const isLocked = lockedColumns.has(colName);
               cell.fill = {
                 type: "pattern",
                 pattern: "solid",
-                fgColor: { argb: "FFE2F0D9" },
+                fgColor: { argb: isLocked ? "FFFFCDD2" : "FFFFFFFF" },
               };
+              if (isLocked) {
+                cell.font = { color: { argb: "FF333333" } };
+              }
             });
           });
         } else if (Array.isArray(data.fields)) {
