@@ -2260,27 +2260,26 @@ function populateDocumentProjectFilter() {
   // Get the project filter select element
   const projectFilter = document.getElementById("documentProjectFilter");
   // Get unique project names from all documents
-  const uniqueProjects = [
-    ...new Set(
-      allDocuments.map((doc) => ({
-        id: doc.project_id,
-        name: doc.project_name || "Unknown Project",
-      })),
-    ),
-  ];
+  const uniqueProjects = new Map();
+  allDocuments.forEach((doc) => {
+    if (!doc || doc.project_id === null || doc.project_id === undefined) return;
+    if (!uniqueProjects.has(doc.project_id)) {
+      uniqueProjects.set(doc.project_id, doc.project_name || "Unknown Project");
+    }
+  });
   // Clear existing options except the first one
   while (projectFilter.options.length > 1) {
     // Remove options at index 1
     projectFilter.remove(1);
   }
   // Loop through each unique project
-  uniqueProjects.forEach((project) => {
+  uniqueProjects.forEach((name, id) => {
     // Create new option element
     const option = document.createElement("option");
     // Set the option value to project ID
-    option.value = project.id;
+    option.value = id;
     // Set the option text to project name
-    option.textContent = project.name;
+    option.textContent = name;
     // Append option to select element
     projectFilter.appendChild(option);
   });
@@ -2311,6 +2310,18 @@ function displayDocumentsTable(documents) {
     const fileExt = doc.original_name
       ? doc.original_name.split(".").pop().toUpperCase()
       : "UNKNOWN";
+    const docStatus = String(doc.doc_status || "draft").toLowerCase();
+    const statusLabel = docStatus
+      ? docStatus.charAt(0).toUpperCase() + docStatus.slice(1)
+      : "Draft";
+    const statusClass =
+      docStatus === "approved"
+        ? "success"
+        : docStatus === "rejected"
+          ? "danger"
+          : docStatus === "submitted" || docStatus === "pending"
+            ? "warning"
+            : "secondary";
     // Set the HTML content of the row with document data
     row.innerHTML = `
       <td>${doc.project_name || "Unknown"}</td>
@@ -2318,7 +2329,7 @@ function displayDocumentsTable(documents) {
       <td>${doc.uploaded_by_name || "Unknown"}</td>
       <td>${new Date(doc.created_at).toLocaleDateString()}</td>
       <td><span class="badge badge-${fileExt === "PDF" ? "danger" : fileExt === "ZIP" ? "info" : "warning"}">${fileExt}</span></td>
-      <td><span class="badge badge-success">Approved</span></td>
+      <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
       <td>
         <button class="btn btn-small" onclick="downloadDocument('${doc.file_path}', '${doc.original_name}')">Download</button>
       </td>

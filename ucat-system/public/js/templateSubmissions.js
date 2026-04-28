@@ -10,6 +10,7 @@ let currentSubmissionContext = {
   projectTemplateId: null,
   template: null,
   originalSubmissionId: null,
+  isResubmitting: false,
 };
 
 function syncTemplateSubmissionProject(projectId) {
@@ -70,6 +71,7 @@ function normalizeTableColumns(columnsInput) {
           isLocked: false,
           fixedValue: "",
           rowFixedValues: {},
+          formulaType: null,
         };
       }
 
@@ -90,6 +92,7 @@ function normalizeTableColumns(columnsInput) {
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        formulaType: column.formulaType || column.formula_type || null,
       };
     })
     .filter(Boolean);
@@ -231,8 +234,12 @@ function loadTemplatesForProject() {
  */
 function onTemplateSelected() {
   const select = document.getElementById("submissionTemplateSelect");
-  clearResubmitBanner();
-  currentSubmissionContext.originalSubmissionId = null;
+  if (!currentSubmissionContext.isResubmitting) {
+    clearResubmitBanner();
+    currentSubmissionContext.originalSubmissionId = null;
+  } else {
+    currentSubmissionContext.isResubmitting = false;
+  }
   const selectedOption = select.options[select.selectedIndex];
 
   if (!select.value) {
@@ -672,33 +679,39 @@ function viewSubmissionDetail(submissionId) {
         const modalContent = document.getElementById("submissionModalContent");
 
         let html = `
-          <div style="margin-bottom: 20px;">
-            <p><strong>Template:</strong> ${submission.template?.name || "N/A"}</p>
-            <p><strong>Date:</strong> ${formatDate(submission.submission_date)}</p>
-            <p><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></p>
-            <p><strong>Submitted On:</strong> ${formatDate(submission.created_at)}</p>
+          <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div>
+              <p><strong>Template:</strong> ${submission.template?.name || "N/A"}</p>
+              <p><strong>Date:</strong> ${formatDate(submission.submission_date)}</p>
+            </div>
+            <div>
+              <p><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></p>
+              <p><strong>Submitted On:</strong> ${formatDate(submission.created_at)}</p>
+              ${submission.reviewed_by_name ? `<p><strong>Reviewed By:</strong> ${submission.reviewed_by_name}</p>` : ""}
+            </div>
+          </div>
+
+          <h4>Submitted Data:</h4>
         `;
 
-        if (
-          submission.status === "approved" ||
-          submission.status === "rejected"
-        ) {
-          html += `<p><strong>Reviewed By:</strong> ${submission.reviewed_by || "N/A"}</p>`;
-          if (submission.review_comment) {
-            html += `<p><strong>Review Comment:</strong> ${submission.review_comment}</p>`;
-          }
-        }
-
-        html += "</div>";
-
-        // Display submitted data
-        html += "<h4>Submitted Data:</h4>";
         html += renderSubmissionData(submission);
+
+        if (submission.status !== "submitted") {
+          html += `
+            <div style="margin-top: 15px; padding: 15px; background: #f0f0f0; border-radius: 6px;">
+              <p><strong>Review Comment:</strong> ${submission.review_comment || "No comment provided"}</p>
+            </div>
+          `;
+        }
 
         modalContent.innerHTML = html;
         document.getElementById("submissionModalTitle").textContent =
           `${submission.template?.name || "Submission"} - ${formatDate(submission.submission_date)}`;
-        document.getElementById("viewSubmissionModal").style.display = "flex";
+        if (typeof openModal === "function") {
+          openModal("viewSubmissionModal");
+        } else {
+          document.getElementById("viewSubmissionModal").style.display = "flex";
+        }
       }
     })
     .catch((error) =>
@@ -712,9 +725,12 @@ function renderSubmissionData(submission) {
   const data = submission.data || {};
 
   if (templateType === "table" && Array.isArray(data.rows)) {
-    const columns = normalizeTableColumns(snapshot.columns || data.columns || []).map(
-      (column) => column.name,
+    const columnDefs = normalizeTableColumns(
+      snapshot.columns || data.columns || [],
     );
+    const columns = columnDefs.map((column) => column.name);
+    const labelColumn =
+      columnDefs.find((column) => !column.formulaType)?.name || columns[0];
     const headerCells = columns
       .map(
         (col) =>
@@ -722,13 +738,32 @@ function renderSubmissionData(submission) {
       )
       .join("");
     const bodyRows = data.rows
-      .map(
-        (row) => `
-      <tr>
-        ${columns.map((col) => `<td style="padding: 8px; border: 1px solid #ddd;">${row[col] || ""}</td>`).join("")}
+      .map((row) => {
+        const isSummary = row && row.__summaryType;
+        return `
+      <tr style="${isSummary ? "background: #fff8db;" : ""}">
+        ${columns
+          .map((col) => {
+            let value =
+              row[col] === null ||
+              row[col] === undefined ||
+              row[col] === "null"
+                ? ""
+                : row[col];
+            if (
+              isSummary &&
+              labelColumn &&
+              col === labelColumn &&
+              (value === "" || value === null || value === undefined)
+            ) {
+              value = row.__summaryLabel || "";
+            }
+            return `<td style="padding: 8px; border: 1px solid #ddd;${isSummary ? " font-weight: 600; border-top: 2px solid #f0cf6d; background: #fff8db;" : ""}">${value}</td>`;
+          })
+          .join("")}
       </tr>
-    `,
-      )
+    `;
+      })
       .join("");
 
     return `
@@ -910,6 +945,7 @@ function prefillTemplateFormFromSubmission(submission) {
     if (tableBody) {
       tableBody.innerHTML = "";
       data.rows.forEach((rowObj) => {
+        if (rowObj && rowObj.__summaryType) return;
         addTemplateTableRow();
         const tr = tableBody.lastElementChild;
         if (!tr) return;
@@ -942,6 +978,7 @@ function resubmitRejectedSubmission(submissionId) {
 
       const submission = payload.data;
       currentSubmissionContext.originalSubmissionId = submission.id;
+      currentSubmissionContext.isResubmitting = true;
       const dateInput = document.getElementById("submissionDate");
       if (dateInput) dateInput.value = submission.submission_date;
 

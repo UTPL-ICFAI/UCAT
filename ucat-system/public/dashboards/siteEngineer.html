@@ -279,7 +279,12 @@
         <span id="submissionModalTitle">Submission Detail</span>
         <button class="modal-close" onclick="closeModal('viewSubmissionModal')">&times;</button>
       </div>
-      <div style="padding: 20px;" id="submissionModalContent"></div>
+      <div style="padding: 20px;">
+        <div id="submissionModalContent"></div>
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; display: flex; gap: 10px;">
+          <button class="btn btn-secondary" onclick="closeModal('viewSubmissionModal')" style="margin-left: auto;">Close</button>
+        </div>
+      </div>
     </div>
   </div>
 

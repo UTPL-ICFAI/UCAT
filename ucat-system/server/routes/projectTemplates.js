@@ -139,6 +139,18 @@ function parseJson(value, fallback) {
   return value;
 }
 
+function normalizeFormulaType(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "AVG") return "AVERAGE";
+  if (normalized === "TOTAL") return "SUM";
+  if (["SUM", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
 
 
 function normalizeTemplateColumns(columnsInput) {
@@ -155,6 +167,7 @@ function normalizeTemplateColumns(columnsInput) {
           isLocked: false,
           fixedValue: "",
           rowFixedValues: {},
+          formulaType: null,
         };
       }
 
@@ -177,9 +190,92 @@ function normalizeTemplateColumns(columnsInput) {
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        formulaType: normalizeFormulaType(column.formulaType || column.formula_type),
       };
     })
     .filter(Boolean);
+}
+
+function summaryLabelForFormula(formulaType) {
+  switch (formulaType) {
+    case "SUM":
+      return "Total";
+    case "AVERAGE":
+      return "Average";
+    case "MIN":
+      return "Min";
+    case "MAX":
+      return "Max";
+    default:
+      return "Total";
+  }
+}
+
+function appendSummaryRows(data, templateSnapshot) {
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  const columnDefs = normalizeTemplateColumns(
+    templateSnapshot.columns || data.columns || [],
+  );
+
+  if (rows.length === 0 || columnDefs.length === 0) {
+    return data;
+  }
+
+  const formulaColumns = columnDefs.filter((c) => !!c.formulaType);
+  if (formulaColumns.length === 0) {
+    return data;
+  }
+
+  const cleanRows = rows.filter((row) => !row || !row.__summaryType);
+  const labelColumn =
+    columnDefs.find((c) => !c.formulaType)?.name || columnDefs[0].name;
+
+  const grouped = new Map();
+  formulaColumns.forEach((col) => {
+    if (!grouped.has(col.formulaType)) grouped.set(col.formulaType, []);
+    grouped.get(col.formulaType).push(col.name);
+  });
+
+  const summaryRows = [];
+  ["SUM", "AVERAGE", "MIN", "MAX"].forEach((formulaType) => {
+    if (!grouped.has(formulaType)) return;
+    const cols = grouped.get(formulaType) || [];
+    const summaryRow = {
+      __summaryType: formulaType,
+      __summaryLabel: summaryLabelForFormula(formulaType),
+    };
+
+    cols.forEach((colName) => {
+      const values = cleanRows
+        .map((row) => parseFloat(row?.[colName]))
+        .filter((value) => !Number.isNaN(value));
+      if (values.length === 0) return;
+
+      let result = null;
+      if (formulaType === "SUM") {
+        result = values.reduce((sum, value) => sum + value, 0);
+      } else if (formulaType === "AVERAGE") {
+        result = values.reduce((sum, value) => sum + value, 0) / values.length;
+      } else if (formulaType === "MIN") {
+        result = Math.min(...values);
+      } else if (formulaType === "MAX") {
+        result = Math.max(...values);
+      }
+
+      if (result !== null) summaryRow[colName] = result;
+    });
+
+    if (labelColumn) {
+      const existing = summaryRow[labelColumn];
+      if (existing === undefined || existing === null || existing === "") {
+        summaryRow[labelColumn] = summaryRow.__summaryLabel;
+      }
+    }
+
+    summaryRows.push(summaryRow);
+  });
+
+  return { ...data, rows: [...cleanRows, ...summaryRows] };
 }
 
 function getColumnNames(columnsInput) {
@@ -1436,6 +1532,7 @@ router.post(
         }
 
         sanitizedData = applyTableColumnPolicies(data, templateSnapshot);
+        sanitizedData = appendSummaryRows(sanitizedData, templateSnapshot);
       } else {
         // FIX: Feature4 - Validate required fields by name/label case-insensitively and support required row cells.
         const missing = extractSubmissionValues(data, templateSnapshot);

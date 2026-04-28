@@ -222,12 +222,22 @@ function renderSubmissionData(submission) {
   if (templateType === "table" && Array.isArray(data.rows)) {
     const columns = (snapshot.columns || data.columns || [])
       .map((column) => {
-        if (typeof column === "string") return { name: column, isLocked: false };
-        if (column && typeof column === "object") return { name: column.name || "", isLocked: !!column.isLocked };
-        return { name: "", isLocked: false };
+        if (typeof column === "string") {
+          return { name: column, isLocked: false, formulaType: null };
+        }
+        if (column && typeof column === "object") {
+          return {
+            name: column.name || "",
+            isLocked: !!column.isLocked,
+            formulaType: column.formulaType || column.formula_type || null,
+          };
+        }
+        return { name: "", isLocked: false, formulaType: null };
       })
       .filter((c) => c.name);
 
+    const labelColumn =
+      columns.find((column) => !column.formulaType)?.name || columns[0]?.name;
     const header = columns
       .map(
         (col) =>
@@ -235,17 +245,38 @@ function renderSubmissionData(submission) {
       )
       .join("");
     const body = data.rows
-      .map(
-        (row) => `
-      <tr>
-        ${columns.map((col) => {
-          const bgColor = col.isLocked ? "#FFCDD2" : "#FFFFFF";
-          const color = col.isLocked ? "#333" : "black";
-          return `<td style="padding: 8px; border: 1px solid #ddd; background-color: ${bgColor}; color: ${color};">${row[col.name] === null || row[col.name] === undefined || row[col.name] === "null" ? "" : row[col.name]}</td>`;
-        }).join("")}
+      .map((row) => {
+        const isSummary = row && row.__summaryType;
+        return `
+      <tr style="${isSummary ? "background: #fff8db;" : ""}">
+        ${columns
+          .map((col) => {
+            const bgColor = isSummary
+              ? "#fff8db"
+              : col.isLocked
+                ? "#FFCDD2"
+                : "#FFFFFF";
+            const color = col.isLocked ? "#333" : "black";
+            let value =
+              row[col.name] === null ||
+              row[col.name] === undefined ||
+              row[col.name] === "null"
+                ? ""
+                : row[col.name];
+            if (
+              isSummary &&
+              labelColumn &&
+              col.name === labelColumn &&
+              (value === "" || value === null || value === undefined)
+            ) {
+              value = row.__summaryLabel || "";
+            }
+            return `<td style="padding: 8px; border: 1px solid #ddd; background-color: ${bgColor}; color: ${color};${isSummary ? " font-weight: 600; border-top: 2px solid #f0cf6d;" : ""}">${value}</td>`;
+          })
+          .join("")}
       </tr>
-    `,
-      )
+    `;
+      })
       .join("");
 
     return `

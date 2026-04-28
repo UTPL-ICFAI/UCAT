@@ -83,10 +83,11 @@ router.get('/', async (req, res) => {
   try {
     const { project_id, doc_type, status, filter_by_assigned } = req.query;
     
-    let query = `SELECT d.*, u.name as uploaded_by_name 
-                 FROM documents d 
-                 LEFT JOIN users u ON d.uploaded_by = u.id 
-                 WHERE 1=1`;
+    let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
+           FROM documents d 
+           LEFT JOIN users u ON d.uploaded_by = u.id 
+           LEFT JOIN projects p ON d.project_id = p.id
+           WHERE 1=1`;
     const params = [];
     let paramIndex = 1;
     
@@ -136,10 +137,11 @@ router.get('/search', async (req, res) => {
       return res.status(400).json({ error: 'Search query is required' });
     }
     
-    let query = `SELECT d.*, u.name as uploaded_by_name 
-                 FROM documents d 
-                 LEFT JOIN users u ON d.uploaded_by = u.id 
-                 WHERE (d.title ILIKE $1 OR d.drawing_no ILIKE $1 OR d.discipline ILIKE $1)`;
+    let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
+           FROM documents d 
+           LEFT JOIN users u ON d.uploaded_by = u.id 
+           LEFT JOIN projects p ON d.project_id = p.id
+           WHERE (d.title ILIKE $1 OR d.drawing_no ILIKE $1 OR d.discipline ILIKE $1)`;
     const params = [`%${q}%`];
     
     if (project_id) {

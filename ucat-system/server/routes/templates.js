@@ -111,10 +111,7 @@ function normalizeTemplateColumns(columnsInput) {
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
-        isLocked:
-          !!column.isLocked ||
-          !!normalizedFormulaType ||
-          !!column.formulaExpression,
+        isLocked: !!column.isLocked,
         fixedValue:
           column.fixedValue === undefined ? null : String(column.fixedValue),
         rowFixedValues,
