@@ -259,10 +259,11 @@ async function selectProject(projectId) {
   document.getElementById("pageTitle").textContent = project.name;
 
   // Show project info
+  const projectBudget = project.total_budget ?? project.budget_allocated ?? 0;
   const info = `
     <p><strong>Location:</strong> ${project.location}</p>
     <p><strong>City:</strong> ${project.city}</p>
-    <p><strong>Budget:</strong> ₹${parseFloat(project.total_budget || 0).toLocaleString()}</p>
+    <p><strong>Budget:</strong> ₹${parseFloat(projectBudget || 0).toLocaleString()}</p>
     <p><strong>Status:</strong> <span class="badge badge-${project.work_status === "active" ? "success" : "secondary"}">${project.work_status}</span></p>
     <p><strong>Created:</strong> ${formatDate(project.created_at)}</p>
   `;
@@ -536,14 +537,24 @@ async function refreshExpenseWorkspace() {
   if (!currentProjectId) return;
 
   try {
+    const token = localStorage.getItem("auth_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const fetchJson = async (url) => {
+      const response = await fetch(url, {
+        headers,
+        credentials: "include",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `Request failed (${response.status})`);
+      }
+      return payload;
+    };
+
     const [expenses, summaryPayload, requests] = await Promise.all([
-      fetch(`/api/expenses?project_id=${currentProjectId}`).then((r) => r.json()),
-      fetch(`/api/expenses/summary?project_id=${currentProjectId}`).then((r) =>
-        r.json(),
-      ),
-      fetch(`/api/budget-extensions?project_id=${currentProjectId}`).then((r) =>
-        r.json(),
-      ),
+      fetchJson(`/api/projects/${currentProjectId}/expenses`),
+      fetchJson(`/api/projects/${currentProjectId}/budget-summary`),
+      fetchJson(`/api/budget-requests/my?projectId=${currentProjectId}`),
     ]);
 
     expenseCache = Array.isArray(expenses) ? expenses : [];
@@ -562,6 +573,7 @@ async function refreshExpenseWorkspace() {
     renderBudgetRequests(budgetRequestCache);
   } catch (error) {
     console.error("Error refreshing expenses:", error);
+    showToast(error.message || "Failed to load expense data", "error");
   }
 }
 
@@ -606,6 +618,32 @@ function renderBudgetOverview(summary) {
       : "Request Budget Extension";
   } else {
     requestBtn.style.display = "none";
+  }
+
+  updateExpenseFormState({ total, remaining, percentUsed });
+}
+
+function updateExpenseFormState({ total, remaining, percentUsed }) {
+  const form = document.getElementById("expenseForm");
+  if (!form) return;
+
+  const shouldDisable = total > 0 && remaining <= 0;
+  const submitBtn = form.querySelector("button[type='submit']");
+
+  form.querySelectorAll("input, select, textarea").forEach((el) => {
+    el.disabled = shouldDisable;
+  });
+
+  if (submitBtn) {
+    submitBtn.disabled = shouldDisable;
+    submitBtn.textContent = shouldDisable ? "Budget Exhausted" : "Log Expense";
+  }
+
+  if (shouldDisable && percentUsed >= BUDGET_CRITICAL_THRESHOLD) {
+    showToast(
+      "Budget exhausted. Request an extension to log more expenses.",
+      "warning",
+    );
   }
 }
 
@@ -708,7 +746,11 @@ function renderExpenseList(expenses) {
 
   list.innerHTML = expenses
     .map((expense) => {
-      const isOwner = currentUser && expense.created_by === currentUser.id;
+      const isOwner =
+        currentUser &&
+        (expense.user_id === currentUser.id ||
+          expense.created_by === currentUser.id);
+      const expenseDate = expense.date || expense.expense_date;
       return `
         <div style="border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fff;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -716,7 +758,7 @@ function renderExpenseList(expenses) {
             <div style="font-weight: 700; color: #1a5490;">${formatCurrency(expense.amount)}</div>
           </div>
           <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-top: 4px;">
-            <span>${expense.category} • ${formatDateShort(expense.expense_date)}</span>
+            <span>${expense.category} • ${formatDateShort(expenseDate)}</span>
             <span>Added by ${expense.created_by_name || "Unknown"}</span>
           </div>
           ${expense.notes ? `<div style="margin-top: 6px; font-size: 12px; color: #444;">${expense.notes}</div>` : ""}
@@ -749,6 +791,7 @@ function renderBudgetRequests(requests) {
 
   container.innerHTML = requests
     .map((req) => {
+      const requestedAmount = req.amount_requested ?? req.requested_amount;
       const statusClass =
         req.status === "approved"
           ? "badge-success"
@@ -758,7 +801,7 @@ function renderBudgetRequests(requests) {
       return `
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #eee;">
           <div>
-            <div style="font-size: 13px; font-weight: 600;">${formatCurrency(req.requested_amount)}</div>
+            <div style="font-size: 13px; font-weight: 600;">${formatCurrency(requestedAmount)}</div>
             <div style="font-size: 11px; color:#666;">${formatDateShort(req.created_at)}</div>
           </div>
           <span class="badge ${statusClass}">${req.status}</span>
@@ -771,14 +814,28 @@ function renderBudgetRequests(requests) {
 async function handleExpenseSubmit(e) {
   e.preventDefault();
 
-  const description = document.getElementById("expenseDescription").value.trim();
+  const description = document
+    .getElementById("expenseDescription")
+    .value.trim();
   const category = document.getElementById("expenseCategory").value;
   const amount = document.getElementById("expenseAmount").value;
   const expenseDate = document.getElementById("expenseDate").value;
   const notes = document.getElementById("expenseNotes").value.trim();
 
-  if (!description || !category || !amount) {
+  const amountValue = Number(amount);
+  if (!description || !category || Number.isNaN(amountValue)) {
     showToast("Please fill out all required expense fields", "warning");
+    return;
+  }
+
+  if (
+    expenseSummaryCache?.totalBudget > 0 &&
+    expenseSummaryCache?.remaining <= 0
+  ) {
+    showToast(
+      "Budget exhausted. Request an extension to log more expenses.",
+      "warning",
+    );
     return;
   }
 
@@ -790,17 +847,18 @@ async function handleExpenseSubmit(e) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
       },
+      credentials: "include",
       body: JSON.stringify({
-        project_id: currentProjectId,
+        projectId: currentProjectId,
         description,
         category,
-        amount,
-        expense_date: expenseDate,
+        amount: amountValue,
+        date: expenseDate,
         notes: notes || null,
       }),
     });
 
-    const payload = await response.json();
+    const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.error || "Failed to log expense");
     }
@@ -833,6 +891,7 @@ async function deleteExpense(expenseId) {
       headers: {
         Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
       },
+      credentials: "include",
     });
 
     const payload = await response.json();
@@ -860,18 +919,21 @@ function exportExpensesCsv() {
     ["Description", "Category", "Amount", "Date", "Notes", "Added By"],
   ];
   expenseCache.forEach((expense) => {
+    const expenseDate = expense.date || expense.expense_date;
     rows.push([
       expense.description,
       expense.category,
       expense.amount,
-      expense.expense_date,
+      expenseDate,
       expense.notes || "",
       expense.created_by_name || "",
     ]);
   });
 
   const csv = rows
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .map((row) =>
+      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+    )
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = window.URL.createObjectURL(blob);
@@ -912,15 +974,15 @@ async function handleBudgetExtensionSubmit(e) {
 
   showLoading(true);
   try {
-    const response = await fetch("/api/budget-extensions", {
+    const response = await fetch("/api/budget-requests", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
       },
       body: JSON.stringify({
-        project_id: currentProjectId,
-        requested_amount: amount,
+        projectId: currentProjectId,
+        amount_requested: amount,
         justification,
       }),
     });

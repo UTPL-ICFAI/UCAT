@@ -1188,14 +1188,18 @@ function buildProjectOptionsHtml() {
 
 function pushTemplateToProject(templateId, mode) {
   const token = localStorage.getItem("auth_token");
-  const projectSelect = document.getElementById(`templatePushProject_${templateId}`);
+  const projectSelect = document.getElementById(
+    `templatePushProject_${templateId}`,
+  );
   const repetitionTypeEl = document.getElementById(
     `templatePushRepetitionType_${templateId}`,
   );
   const repetitionDaysEl = document.getElementById(
     `templatePushRepetitionDays_${templateId}`,
   );
-  const scheduledAtEl = document.getElementById(`templatePushSchedule_${templateId}`);
+  const scheduledAtEl = document.getElementById(
+    `templatePushSchedule_${templateId}`,
+  );
 
   if (!projectSelect || !projectSelect.value) {
     showToast("Please select a project to push", "error");
@@ -1236,7 +1240,9 @@ function pushTemplateToProject(templateId, mode) {
         return;
       }
       showToast(
-        data.scheduled ? "Template scheduled successfully" : "Template pushed successfully",
+        data.scheduled
+          ? "Template scheduled successfully"
+          : "Template pushed successfully",
         "success",
       );
       loadTemplates();
@@ -2458,7 +2464,7 @@ function loadBudgetExtensionRequests() {
   if (projectValue) params.append("project_id", projectValue);
   if (statusValue) params.append("status", statusValue);
 
-  const url = `/api/budget-extensions/admin${params.toString() ? "?" + params.toString() : ""}`;
+  const url = `/api/admin/budget-requests${params.toString() ? "?" + params.toString() : ""}`;
 
   fetch(url, {
     headers: {
@@ -2488,6 +2494,8 @@ function displayBudgetExtensionRequests(requests) {
 
   tableBody.innerHTML = requests
     .map((request) => {
+      const requestedAmount =
+        request.amount_requested ?? request.requested_amount;
       const statusClass =
         request.status === "approved"
           ? "badge-success"
@@ -2505,7 +2513,7 @@ function displayBudgetExtensionRequests(requests) {
           <td>${request.project_name || "Unknown"}</td>
           <td>${request.requested_by_name || "Unknown"}</td>
           <td>${formatCurrency(request.budget_before)}</td>
-          <td>${formatCurrency(request.requested_amount)}</td>
+          <td>${formatCurrency(requestedAmount)}</td>
           <td>${percentUsed}% (${formatCurrency(request.spent_before)})</td>
           <td><span class="badge ${statusClass}">${request.status}</span></td>
           <td>${new Date(request.created_at).toLocaleDateString()}</td>
@@ -2521,13 +2529,13 @@ function approveBudgetExtension(requestId) {
   const note = prompt("Approval note (optional):", "Approved") || "";
 
   const token = localStorage.getItem("auth_token");
-  fetch(`/api/budget-extensions/${requestId}/approve`, {
-    method: "POST",
+  fetch(`/api/admin/budget-requests/${requestId}`, {
+    method: "PATCH",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ review_note: note }),
+    body: JSON.stringify({ status: "approved", review_note: note }),
   })
     .then((response) => response.json())
     .then((data) => {
@@ -2547,13 +2555,13 @@ function rejectBudgetExtension(requestId) {
   const note = prompt("Rejection note (optional):", "Rejected") || "";
 
   const token = localStorage.getItem("auth_token");
-  fetch(`/api/budget-extensions/${requestId}/reject`, {
-    method: "POST",
+  fetch(`/api/admin/budget-requests/${requestId}`, {
+    method: "PATCH",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ review_note: note }),
+    body: JSON.stringify({ status: "rejected", review_note: note }),
   })
     .then((response) => response.json())
     .then((data) => {
@@ -2652,7 +2660,6 @@ let templateFieldDraft = {
   options: "",
 };
 
-
 function normalizeTableColumnsForDesigner(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
 
@@ -2727,7 +2734,11 @@ function summarizeTableColumnConfig(column) {
   const flags = [];
 
   if (column.isLocked) flags.push("Locked");
-  if (column.fixedValue !== null && column.fixedValue !== undefined && column.fixedValue !== "") {
+  if (
+    column.fixedValue !== null &&
+    column.fixedValue !== undefined &&
+    column.fixedValue !== ""
+  ) {
     flags.push(`Fixed=${column.fixedValue}`);
   }
   const rowFixedSummary = stringifyRowFixedValues(column.rowFixedValues);
@@ -2947,12 +2958,18 @@ function updateTableColumnName(columnId, newName) {
 }
 
 function configureTableColumn(columnId) {
-  const column = templateCreationState.columns.find((entry) => entry.id === columnId);
+  const column = templateCreationState.columns.find(
+    (entry) => entry.id === columnId,
+  );
   if (!column) return;
 
   const lockModeRaw = prompt(
     `Lock mode for "${column.name}":\n0 = Editable\n1 = Entire column fixed value\n2 = Row-wise fixed values`,
-    column.fixedValue !== null ? "1" : Object.keys(column.rowFixedValues || {}).length > 0 ? "2" : "0",
+    column.fixedValue !== null
+      ? "1"
+      : Object.keys(column.rowFixedValues || {}).length > 0
+        ? "2"
+        : "0",
   );
   if (lockModeRaw === null) return;
   const lockMode = String(lockModeRaw).trim();

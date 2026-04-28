@@ -6,6 +6,7 @@ DROP TABLE IF EXISTS communications CASCADE;
 DROP TABLE IF EXISTS daily_budget_tracking CASCADE;
 DROP TABLE IF EXISTS project_budget_alerts CASCADE;
 DROP TABLE IF EXISTS budget_extension_requests CASCADE;
+DROP TABLE IF EXISTS expenses CASCADE;
 DROP TABLE IF EXISTS expense_entries CASCADE;
 DROP TABLE IF EXISTS troubleshoot_issues CASCADE;
 DROP TABLE IF EXISTS documents CASCADE;
@@ -196,7 +197,25 @@ CREATE TABLE daily_budget_tracking (
 
 CREATE INDEX idx_daily_budget_tracking_project_id ON daily_budget_tracking(project_id);
 
--- Create expense entries table
+-- Create expenses table
+CREATE TABLE expenses (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id),
+  description VARCHAR(255) NOT NULL,
+  category VARCHAR(50) NOT NULL,
+  amount NUMERIC(18,2) NOT NULL CHECK (amount >= 0),
+  date DATE NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_expenses_project_id ON expenses(project_id);
+CREATE INDEX idx_expenses_date ON expenses(date);
+CREATE INDEX idx_expenses_user_id ON expenses(user_id);
+CREATE INDEX idx_expenses_category ON expenses(category);
+
+-- Legacy expense entries table
 CREATE TABLE expense_entries (
   id SERIAL PRIMARY KEY,
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
@@ -220,6 +239,7 @@ CREATE TABLE budget_extension_requests (
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
   requested_by INTEGER REFERENCES users(id),
   requested_amount NUMERIC(18,2) NOT NULL CHECK (requested_amount > 0),
+  amount_requested NUMERIC(18,2),
   justification TEXT NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
   budget_before NUMERIC(18,2),
