@@ -56,7 +56,6 @@ function normalizeTemplate(template) {
   };
 }
 
-
 function normalizeTableColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
 
@@ -72,6 +71,7 @@ function normalizeTableColumns(columnsInput) {
           fixedValue: "",
           rowFixedValues: {},
           formulaType: null,
+          role: null,
         };
       }
 
@@ -93,6 +93,7 @@ function normalizeTableColumns(columnsInput) {
             ? column.rowFixedValues
             : {},
         formulaType: column.formulaType || column.formula_type || null,
+        role: column.role || column.columnRole || null,
       };
     })
     .filter(Boolean);
@@ -102,7 +103,6 @@ function getTemplateColumns() {
   const template = currentSubmissionContext.template || {};
   return normalizeTableColumns(template.columns);
 }
-
 
 function applyColumnPoliciesToRow(tr, rowIndex) {
   const columns = getTemplateColumns();
@@ -149,7 +149,6 @@ function reindexTemplateTableRows() {
     applyColumnPoliciesToRow(tr, rowIndex);
   });
 }
-
 
 /**
  * Load projects for submission project select
@@ -363,7 +362,10 @@ function addTemplateTableRow() {
 }
 
 function removeTemplateTableRow(buttonEl) {
-  const tr = buttonEl && typeof buttonEl.closest === "function" ? buttonEl.closest("tr") : null;
+  const tr =
+    buttonEl && typeof buttonEl.closest === "function"
+      ? buttonEl.closest("tr")
+      : null;
   if (!tr) return;
   tr.remove();
   reindexTemplateTableRows();
@@ -498,12 +500,20 @@ function handleTemplateSubmit(e) {
         row.querySelectorAll("input[data-column]").forEach((input) => {
           const column = input.getAttribute("data-column");
           const value = input.value;
-          rowData[column] = value === null || value === undefined || value === "null" ? "" : String(value);
+          rowData[column] =
+            value === null || value === undefined || value === "null"
+              ? ""
+              : String(value);
           if (rowData[column].trim() !== "") hasValue = true;
         });
 
         columnNames.forEach((columnName) => {
-          if (!Object.prototype.hasOwnProperty.call(rowData, columnName) || rowData[columnName] === null || rowData[columnName] === undefined || rowData[columnName] === "null") {
+          if (
+            !Object.prototype.hasOwnProperty.call(rowData, columnName) ||
+            rowData[columnName] === null ||
+            rowData[columnName] === undefined ||
+            rowData[columnName] === "null"
+          ) {
             rowData[columnName] = "";
           }
         });
@@ -745,9 +755,7 @@ function renderSubmissionData(submission) {
         ${columns
           .map((col) => {
             let value =
-              row[col] === null ||
-              row[col] === undefined ||
-              row[col] === "null"
+              row[col] === null || row[col] === undefined || row[col] === "null"
                 ? ""
                 : row[col];
             if (

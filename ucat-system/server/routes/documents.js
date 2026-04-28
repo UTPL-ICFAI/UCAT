@@ -1,14 +1,14 @@
-import express from 'express';
-import pool from '../db.js';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { requireRole } from '../middleware/role.js';
+import express from "express";
+import pool from "../db.js";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { requireRole } from "../middleware/role.js";
 
 const router = express.Router();
 
 // Setup multer for document uploads
-const docsDir = './uploads/documents';
+const docsDir = "./uploads/documents";
 if (!fs.existsSync(docsDir)) {
   fs.mkdirSync(docsDir, { recursive: true });
 }
@@ -22,187 +22,362 @@ const storage = multer.diskStorage({
     cb(null, projectDir);
   },
   filename: (req, file, cb) => {
-    const uniqueName = Date.now() + '_' + file.originalname;
+    const uniqueName = Date.now() + "_" + file.originalname;
     cb(null, uniqueName);
-  }
+  },
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedMimes = ['application/pdf', 'application/zip', 'image/png', 'image/jpeg'];
+  const allowedMimes = [
+    "application/pdf",
+    "application/zip",
+    "image/png",
+    "image/jpeg",
+  ];
   if (allowedMimes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Only PDF, ZIP, PNG, and JPEG files are allowed'), false);
+    cb(new Error("Only PDF, ZIP, PNG, and JPEG files are allowed"), false);
   }
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
 
 // Upload document (PM and SE)
-router.post('/', upload.single('document'), requireRole('project_manager', 'site_engineer'), async (req, res) => {
-  try {
-    const { project_id, title, doc_type, revision_no, drawing_no, discipline, sub_discipline, design_status, doc_status, package: pkg, corridor, category, confidential, revision_date, doc_date, weightage, remarks } = req.body;
-    
-    if (!project_id || !req.file) {
-      return res.status(400).json({ error: 'project_id and document file are required' });
-    }
-    
-    // Verify user is assigned to this project
-    const assignmentResult = await pool.query(
-      `SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role IN ($3, $4)`,
-      [project_id, req.user.id, 'project_manager', 'site_engineer']
-    );
-    
-    if (assignmentResult.rows.length === 0) {
-      return res.status(403).json({ error: 'Not assigned to this project' });
-    }
-    
-    // Use forward slashes for the database file_path so express.static can serve it consistently across OS
-    const filePath = 'uploads/documents/' + String(project_id) + '/' + req.file.filename;
-    
-    const result = await pool.query(
-      `INSERT INTO documents (project_id, uploaded_by, title, file_path, original_name, doc_type, revision_no, drawing_no, discipline, sub_discipline, design_status, doc_status, package, corridor, category, confidential, revision_date, doc_date, weightage, remarks)
+router.post(
+  "/",
+  upload.single("document"),
+  requireRole("project_manager", "site_engineer"),
+  async (req, res) => {
+    try {
+      const {
+        project_id,
+        title,
+        doc_type,
+        revision_no,
+        drawing_no,
+        discipline,
+        sub_discipline,
+        design_status,
+        doc_status,
+        package: pkg,
+        corridor,
+        category,
+        confidential,
+        revision_date,
+        doc_date,
+        weightage,
+        remarks,
+      } = req.body;
+
+      if (!project_id || !req.file) {
+        return res
+          .status(400)
+          .json({ error: "project_id and document file are required" });
+      }
+
+      // Verify user is assigned to this project
+      const assignmentResult = await pool.query(
+        `SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role IN ($3, $4)`,
+        [project_id, req.user.id, "project_manager", "site_engineer"],
+      );
+
+      if (assignmentResult.rows.length === 0) {
+        return res.status(403).json({ error: "Not assigned to this project" });
+      }
+
+      // Use forward slashes for the database file_path so express.static can serve it consistently across OS
+      const filePath =
+        "uploads/documents/" + String(project_id) + "/" + req.file.filename;
+
+      const result = await pool.query(
+        `INSERT INTO documents (project_id, uploaded_by, title, file_path, original_name, doc_type, revision_no, drawing_no, discipline, sub_discipline, design_status, doc_status, package, corridor, category, confidential, revision_date, doc_date, weightage, remarks)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
-      [project_id, req.user.id, title || null, filePath, req.file.originalname, doc_type || null, revision_no || null, drawing_no || null, discipline || null, sub_discipline || null, design_status || null, doc_status || null, pkg || null, corridor || null, category || null, confidential === 'true' || false, revision_date || null, doc_date || null, weightage || null, remarks || null]
-    );
-    
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Upload document error:', error);
-    res.status(500).json({ error: 'Failed to upload document' });
-  }
-});
+        [
+          project_id,
+          req.user.id,
+          title || null,
+          filePath,
+          req.file.originalname,
+          doc_type || null,
+          revision_no || null,
+          drawing_no || null,
+          discipline || null,
+          sub_discipline || null,
+          design_status || null,
+          doc_status || null,
+          pkg || null,
+          corridor || null,
+          category || null,
+          confidential === "true" || false,
+          revision_date || null,
+          doc_date || null,
+          weightage || null,
+          remarks || null,
+        ],
+      );
+
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("Upload document error:", error);
+      res.status(500).json({ error: "Failed to upload document" });
+    }
+  },
+);
 
 // Get documents
-router.get('/', async (req, res) => {
-  try {
-    const { project_id, doc_type, status, filter_by_assigned } = req.query;
-    
-    let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
+router.get(
+  "/",
+  requireRole("superadmin", "project_manager", "site_engineer", "supervisor"),
+  async (req, res) => {
+    try {
+      const { project_id, doc_type, status, filter_by_assigned } = req.query;
+
+      let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
            FROM documents d 
            LEFT JOIN users u ON d.uploaded_by = u.id 
            LEFT JOIN projects p ON d.project_id = p.id
            WHERE 1=1`;
-    const params = [];
-    let paramIndex = 1;
-    
-    // If filter_by_assigned is true, only show documents from user's assigned projects
-    if (filter_by_assigned === 'true') {
-      query += ` AND d.project_id IN (
+      const params = [];
+      let paramIndex = 1;
+
+      // Non-superadmins only see documents from assigned projects
+      if (req.user.role !== "superadmin") {
+        query += ` AND d.project_id IN (
                    SELECT project_id FROM project_assignments WHERE user_id = $${paramIndex}
                  )`;
-      params.push(req.user.id);
-      paramIndex++;
+        params.push(req.user.id);
+        paramIndex++;
+      } else if (filter_by_assigned === "true") {
+        query += ` AND d.project_id IN (
+                   SELECT project_id FROM project_assignments WHERE user_id = $${paramIndex}
+                 )`;
+        params.push(req.user.id);
+        paramIndex++;
+      }
+
+      if (project_id) {
+        query += ` AND d.project_id = $${paramIndex}`;
+        params.push(project_id);
+        paramIndex++;
+      }
+
+      if (doc_type) {
+        query += ` AND d.doc_type = $${paramIndex}`;
+        params.push(doc_type);
+        paramIndex++;
+      }
+
+      if (status) {
+        query += ` AND d.doc_status = $${paramIndex}`;
+        params.push(status);
+        paramIndex++;
+      }
+
+      query += " ORDER BY d.created_at DESC";
+
+      const result = await pool.query(query, params);
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Get documents error:", error);
+      res.status(500).json({ error: "Failed to fetch documents" });
     }
-    
-    if (project_id) {
-      query += ` AND d.project_id = $${paramIndex}`;
-      params.push(project_id);
-      paramIndex++;
-    }
-    
-    if (doc_type) {
-      query += ` AND d.doc_type = $${paramIndex}`;
-      params.push(doc_type);
-      paramIndex++;
-    }
-    
-    if (status) {
-      query += ` AND d.doc_status = $${paramIndex}`;
-      params.push(status);
-      paramIndex++;
-    }
-    
-    query += ' ORDER BY d.created_at DESC';
-    
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Get documents error:', error);
-    res.status(500).json({ error: 'Failed to fetch documents' });
-  }
-});
+  },
+);
 
 // Search documents
-router.get('/search', async (req, res) => {
-  try {
-    const { q, project_id } = req.query;
-    
-    if (!q) {
-      return res.status(400).json({ error: 'Search query is required' });
-    }
-    
-    let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
+router.get(
+  "/search",
+  requireRole("superadmin", "project_manager", "site_engineer", "supervisor"),
+  async (req, res) => {
+    try {
+      const { q, project_id } = req.query;
+
+      if (!q) {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      let query = `SELECT d.*, u.name as uploaded_by_name, p.name as project_name
            FROM documents d 
            LEFT JOIN users u ON d.uploaded_by = u.id 
            LEFT JOIN projects p ON d.project_id = p.id
            WHERE (d.title ILIKE $1 OR d.drawing_no ILIKE $1 OR d.discipline ILIKE $1)`;
-    const params = [`%${q}%`];
-    
-    if (project_id) {
-      query += ' AND d.project_id = $2';
-      params.push(project_id);
+      const params = [`%${q}%`];
+
+      if (req.user.role !== "superadmin") {
+        query += ` AND d.project_id IN (
+          SELECT project_id FROM project_assignments WHERE user_id = $2
+        )`;
+        params.push(req.user.id);
+      }
+
+      if (project_id) {
+        const idx = params.length + 1;
+        query += ` AND d.project_id = $${idx}`;
+        params.push(project_id);
+      }
+
+      query += " ORDER BY d.created_at DESC";
+
+      const result = await pool.query(query, params);
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Search documents error:", error);
+      res.status(500).json({ error: "Failed to search documents" });
     }
-    
-    query += ' ORDER BY d.created_at DESC';
-    
-    const result = await pool.query(query, params);
+  },
+);
+
+// Get approved template submission documents (PM/Superadmin)
+router.get(
+  "/approved-submissions",
+  requireRole("superadmin", "project_manager"),
+  async (req, res) => {
+    try {
+      const params = [];
+      let whereClause =
+        "ds.status = 'approved' AND d.doc_type = 'template_submission'";
+
+      if (req.user.role !== "superadmin") {
+        params.push(req.user.id);
+        whereClause += ` AND ds.project_id IN (
+        SELECT project_id FROM project_assignments WHERE user_id = $${params.length}
+      )`;
+      }
+
+      const result = await pool.query(
+        `SELECT
+         d.id as document_id,
+         d.project_id,
+         p.name as project_name,
+         t.name as template_name,
+         ds.id as submission_id,
+         ds.submitted_by,
+         u.name as submitted_by_name,
+         ds.reviewed_by,
+         ru.name as approved_by_name,
+         ds.reviewed_at as approved_at,
+         ds.submission_date,
+         d.file_path,
+         d.original_name,
+         d.doc_status
+       FROM daily_submissions ds
+       JOIN documents d ON ds.document_id = d.id
+       JOIN templates t ON ds.template_id = t.id
+       JOIN projects p ON ds.project_id = p.id
+       JOIN users u ON ds.submitted_by = u.id
+       LEFT JOIN users ru ON ds.reviewed_by = ru.id
+       WHERE ${whereClause}
+       ORDER BY ds.reviewed_at DESC NULLS LAST, ds.submission_date DESC`,
+        params,
+      );
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Get approved submission documents error:", error);
+      res.status(500).json({ error: "Failed to fetch approved submissions" });
+    }
+  },
+);
+
+// Superadmin documents list (manual uploads + approved submissions)
+router.get("/superadmin-list", requireRole("superadmin"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+           d.id as document_id,
+           d.project_id,
+           p.name as project_name,
+           d.title,
+           d.original_name,
+           d.file_path,
+           d.doc_type,
+           d.doc_status,
+           d.created_at,
+           u.name as uploaded_by_name,
+           ds.id as submission_id,
+           ds.submitted_by,
+           su.name as submitted_by_name,
+           ds.reviewed_by,
+           ru.name as approved_by_name,
+           ds.reviewed_at as approved_at,
+           ds.submission_date,
+           t.name as template_name
+         FROM documents d
+         LEFT JOIN daily_submissions ds ON ds.document_id = d.id
+         LEFT JOIN templates t ON ds.template_id = t.id
+         LEFT JOIN projects p ON d.project_id = p.id
+         LEFT JOIN users u ON d.uploaded_by = u.id
+         LEFT JOIN users su ON ds.submitted_by = su.id
+         LEFT JOIN users ru ON ds.reviewed_by = ru.id
+         ORDER BY COALESCE(ds.reviewed_at, d.created_at) DESC`,
+    );
+
     res.json(result.rows);
   } catch (error) {
-    console.error('Search documents error:', error);
-    res.status(500).json({ error: 'Failed to search documents' });
+    console.error("Get superadmin documents error:", error);
+    res.status(500).json({ error: "Failed to fetch documents" });
   }
 });
 
 // Delete document
-router.delete('/:id', requireRole('superadmin', 'project_manager'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Get document first to check permissions and get file path
-    const docResult = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
-    
-    if (docResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Document not found' });
-    }
-    
-    const doc = docResult.rows[0];
-    
-    // Only superadmin or the project manager of this project can delete
-    if (req.user.role !== 'superadmin') {
-      const assignmentResult = await pool.query(
-        'SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = $3',
-        [doc.project_id, req.user.id, 'project_manager']
+router.delete(
+  "/:id",
+  requireRole("superadmin", "project_manager"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Get document first to check permissions and get file path
+      const docResult = await pool.query(
+        "SELECT * FROM documents WHERE id = $1",
+        [id],
       );
-      
-      if (assignmentResult.rows.length === 0) {
-        return res.status(403).json({ error: 'Not authorized to delete this document' });
+
+      if (docResult.rows.length === 0) {
+        return res.status(404).json({ error: "Document not found" });
       }
-    }
-    
-    // Delete from database
-    await pool.query('DELETE FROM documents WHERE id = $1', [id]);
-    
-    // Delete file from disk if it exists
-    if (doc.file_path && fs.existsSync(doc.file_path)) {
-      try {
-        fs.unlinkSync(doc.file_path);
-      } catch (err) {
-        console.error('Failed to delete file from disk:', err);
-        // Continue anyway since db record is deleted
+
+      const doc = docResult.rows[0];
+
+      // Only superadmin or the project manager of this project can delete
+      if (req.user.role !== "superadmin") {
+        const assignmentResult = await pool.query(
+          "SELECT * FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = $3",
+          [doc.project_id, req.user.id, "project_manager"],
+        );
+
+        if (assignmentResult.rows.length === 0) {
+          return res
+            .status(403)
+            .json({ error: "Not authorized to delete this document" });
+        }
       }
+
+      // Delete from database
+      await pool.query("DELETE FROM documents WHERE id = $1", [id]);
+
+      // Delete file from disk if it exists
+      if (doc.file_path && fs.existsSync(doc.file_path)) {
+        try {
+          fs.unlinkSync(doc.file_path);
+        } catch (err) {
+          console.error("Failed to delete file from disk:", err);
+          // Continue anyway since db record is deleted
+        }
+      }
+
+      res.json({ success: true, message: "Document deleted successfully" });
+    } catch (error) {
+      console.error("Delete document error:", error);
+      res.status(500).json({ error: "Failed to delete document" });
     }
-    
-    res.json({ success: true, message: 'Document deleted successfully' });
-  } catch (error) {
-    console.error('Delete document error:', error);
-    res.status(500).json({ error: 'Failed to delete document' });
-  }
-});
+  },
+);
 
 export default router;

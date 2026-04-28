@@ -2234,17 +2234,7 @@ function loadAllDocuments() {
   // Get the JWT token from localStorage for authentication
   const token = localStorage.getItem("auth_token");
 
-  // Get user role from localStorage
-  const userRole = localStorage.getItem("user_role");
-
-  // Determine if we should filter documents by assigned projects
-  // Superadmin can see all documents, others see only their assigned projects
-  const shouldFilterByAssigned = userRole !== "superadmin" ? "true" : "false";
-
-  // Make API request to fetch documents with optional project filtering
-  const url =
-    "/api/documents" +
-    (shouldFilterByAssigned === "true" ? "?filter_by_assigned=true" : "");
+  const url = "/api/documents/superadmin-list";
 
   fetch(url, {
     // Set request headers with Authorization token
@@ -2330,7 +2320,7 @@ function displayDocumentsTable(documents) {
   if (!documents || documents.length === 0) {
     // Create a message row if no documents exist
     tableBody.innerHTML =
-      '<tr><td colspan="7" style="text-align: center;">No documents found</td></tr>';
+      '<tr><td colspan="6" style="text-align: center;">No documents found</td></tr>';
     // Exit function early if no documents
     return;
   }
@@ -2338,32 +2328,21 @@ function displayDocumentsTable(documents) {
   documents.forEach((doc) => {
     // Create a new table row element
     const row = document.createElement("tr");
-    // Get file extension from original filename
-    const fileExt = doc.original_name
-      ? doc.original_name.split(".").pop().toUpperCase()
-      : "UNKNOWN";
-    const docStatus = String(doc.doc_status || "draft").toLowerCase();
-    const statusLabel = docStatus
-      ? docStatus.charAt(0).toUpperCase() + docStatus.slice(1)
-      : "Draft";
-    const statusClass =
-      docStatus === "approved"
-        ? "success"
-        : docStatus === "rejected"
-          ? "danger"
-          : docStatus === "submitted" || docStatus === "pending"
-            ? "warning"
-            : "secondary";
+    const approvedAt = doc.approved_at || doc.submission_date || doc.created_at;
+    const submittedBy =
+      doc.submitted_by_name || doc.uploaded_by_name || "Unknown";
+    const approvedBy = doc.approved_by_name || "-";
+    const templateLabel =
+      doc.template_name || doc.title || doc.original_name || "Document";
     // Set the HTML content of the row with document data
     row.innerHTML = `
       <td>${doc.project_name || "Unknown"}</td>
-      <td>${doc.title || doc.original_name || "Untitled"}</td>
-      <td>${doc.uploaded_by_name || "Unknown"}</td>
-      <td>${new Date(doc.created_at).toLocaleDateString()}</td>
-      <td><span class="badge badge-${fileExt === "PDF" ? "danger" : fileExt === "ZIP" ? "info" : "warning"}">${fileExt}</span></td>
-      <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
+      <td>${templateLabel}</td>
+      <td>${submittedBy}</td>
+      <td>${approvedBy}</td>
+      <td>${approvedAt ? new Date(approvedAt).toLocaleDateString() : "-"}</td>
       <td>
-        <button class="btn btn-small" onclick="downloadDocument('${doc.file_path}', '${doc.original_name}')">Download</button>
+        <button class="btn btn-small" onclick="downloadDocument('${doc.file_path}', '${doc.original_name || "document"}')">Download</button>
       </td>
     `;
     // Append the row to the table body
@@ -2378,37 +2357,12 @@ function displayDocumentsTable(documents) {
 function filterDocuments() {
   // Get the project filter select value
   const projectValue = document.getElementById("documentProjectFilter").value;
-  // Get the document type filter select value
-  const typeValue = document.getElementById("documentTypeFilter").value;
-  // Filter documents based on project and type criteria
+  // Filter documents based on project criteria
   const filteredDocuments = allDocuments.filter((doc) => {
     // Check if document project matches filter (or all projects if filter is empty)
     const matchesProject = !projectValue || doc.project_id == projectValue;
-    // Check if document type matches filter (or all types if filter is empty)
-    let matchesType = true;
-    // Only check type if filter has a value
-    if (typeValue) {
-      // Get the file extension
-      const fileExt = doc.original_name
-        ? doc.original_name.split(".").pop().toLowerCase()
-        : "";
-      // Check based on type filter
-      if (typeValue === "pdf" && fileExt !== "pdf") {
-        matchesType = false;
-      } else if (
-        typeValue === "image" &&
-        !["png", "jpg", "jpeg", "gif"].includes(fileExt)
-      ) {
-        matchesType = false;
-      } else if (
-        typeValue === "archive" &&
-        !["zip", "rar", "7z"].includes(fileExt)
-      ) {
-        matchesType = false;
-      }
-    }
-    // Return true if both conditions are met
-    return matchesProject && matchesType;
+    // Return true if document matches project criteria
+    return matchesProject;
   });
   // Display the filtered documents in the table
   displayDocumentsTable(filteredDocuments);
@@ -2420,10 +2374,17 @@ function filterDocuments() {
  * @param {string} fileName - The original filename for download
  */
 function downloadDocument(filePath, fileName) {
+  if (!filePath) {
+    showToast("File path missing", "error");
+    return;
+  }
+  const normalizedPath = filePath.startsWith("/")
+    ? filePath
+    : "/" + filePath.replace(/^\/+/, "");
   // Create a new anchor element for download
   const link = document.createElement("a");
   // Set the href to the file path
-  link.href = filePath;
+  link.href = normalizedPath;
   // Set the download attribute with filename
   link.download = fileName || "document";
   // Append link to body temporarily
@@ -2580,48 +2541,55 @@ function rejectBudgetExtension(requestId) {
  * Makes POST request to /api/auth/logout
  */
 function logoutUser() {
-  // Make API request to logout
   fetch("/api/auth/logout", {
-    // Set HTTP method to POST
     method: "POST",
   })
-    // Handle the response
-    .then((response) => {
-      // Clear authentication token from localStorage
+    .then(() => {
       localStorage.removeItem("auth_token");
-      // Redirect to login page after logout
+      localStorage.removeItem("user_role");
       window.location.href = "/";
     })
-    // Catch and log any errors
     .catch((error) => {
-      // Log error to console
-      console.error("Error logging out:", error);
-      // Clear localStorage anyway
+      console.error("Logout failed:", error);
       localStorage.removeItem("auth_token");
-      // Redirect to home page
+      localStorage.removeItem("user_role");
       window.location.href = "/";
     });
 }
 
-/**
- * Display a toast notification message to the user
- * @param {string} message - The message to display
- * @param {string} type - The type of notification ('success', 'error', 'info')
- */
 function showToast(message, type) {
-  // Get the toast container element
-  const toastContainer = document.getElementById("toastContainer");
-  // Create a new div element for the toast
+  let toastContainer = document.getElementById("toastContainer");
+  if (!toastContainer) {
+    toastContainer = document.createElement("div");
+    toastContainer.id = "toastContainer";
+    toastContainer.style.position = "fixed";
+    toastContainer.style.top = "20px";
+    toastContainer.style.right = "20px";
+    toastContainer.style.zIndex = "9999";
+    toastContainer.style.display = "flex";
+    toastContainer.style.flexDirection = "column";
+    toastContainer.style.gap = "10px";
+    document.body.appendChild(toastContainer);
+  }
+
   const toast = document.createElement("div");
-  // Add CSS class for toast styling
   toast.className = `toast toast-${type}`;
-  // Set the toast message text
   toast.textContent = message;
-  // Append the toast to the container
+  toast.style.padding = "10px 14px";
+  toast.style.borderRadius = "6px";
+  toast.style.background =
+    type === "success"
+      ? "#e7f7ee"
+      : type === "error"
+        ? "#fdecea"
+        : type === "warning"
+          ? "#fff4e5"
+          : "#eef2ff";
+  toast.style.color = "#333";
+  toast.style.border = "1px solid #ddd";
+
   toastContainer.appendChild(toast);
-  // Remove the toast after 3 seconds (3000 milliseconds)
   setTimeout(() => {
-    // Remove the toast element from DOM
     toast.remove();
   }, 3000);
 }
@@ -2672,8 +2640,10 @@ function normalizeTableColumnsForDesigner(columnsInput) {
           id: `column_${Date.now()}_${index}`,
           name,
           isLocked: false,
-          fixedValue: null,
+          fixedValue: "",
           rowFixedValues: {},
+          formulaType: null,
+          role: null,
         };
       }
 
@@ -2686,13 +2656,19 @@ function normalizeTableColumnsForDesigner(columnsInput) {
         name,
         isLocked: !!column.isLocked,
         fixedValue:
-          column.fixedValue === undefined || column.fixedValue === null
-            ? null
+          column.fixedValue === undefined ||
+          column.fixedValue === null ||
+          column.fixedValue === "null"
+            ? ""
             : String(column.fixedValue),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        formulaType: normalizeFormulaTypeInput(
+          column.formulaType || column.formula_type,
+        ),
+        role: normalizeColumnRole(column.role || column.columnRole),
       };
     })
     .filter(Boolean)
@@ -2737,7 +2713,8 @@ function summarizeTableColumnConfig(column) {
   if (
     column.fixedValue !== null &&
     column.fixedValue !== undefined &&
-    column.fixedValue !== ""
+    column.fixedValue !== "" &&
+    column.fixedValue !== "null"
   ) {
     flags.push(`Fixed=${column.fixedValue}`);
   }
@@ -2745,7 +2722,46 @@ function summarizeTableColumnConfig(column) {
   if (rowFixedSummary) {
     flags.push(`Row fixed: ${rowFixedSummary}`);
   }
+  if (column.formulaType) flags.push(`Function=${column.formulaType}`);
+  if (column.role) flags.push(`Role=${column.role}`);
   return flags.length > 0 ? flags.join(" | ") : "Editable";
+}
+
+function normalizeFormulaTypeInput(value) {
+  if (!value) return null;
+  const normalized = String(value).toUpperCase();
+  if (normalized === "AVG") return "AVERAGE";
+  if (normalized === "TOTAL" || normalized === "SUM") return "SUM";
+  if (["MIN", "MAX", "AVERAGE"].includes(normalized)) return normalized;
+  return null;
+}
+
+function updateColumnFormula(columnId, value) {
+  const column = templateCreationState.columns.find((c) => c.id === columnId);
+  if (!column) return;
+  column.formulaType = normalizeFormulaTypeInput(value);
+  renderColumnsContainer();
+  updateTemplatePreview();
+}
+
+function normalizeColumnRole(value) {
+  if (!value) return null;
+  const normalized = String(value).toLowerCase();
+  if (["main", "target", "achieved"].includes(normalized)) return normalized;
+  return null;
+}
+
+function updateColumnRole(columnId, value) {
+  const role = normalizeColumnRole(value);
+  templateCreationState.columns.forEach((col) => {
+    if (col.id === columnId) {
+      col.role = role;
+    } else if (role && col.role === role) {
+      col.role = null;
+    }
+  });
+  renderColumnsContainer();
+  updateTemplatePreview();
 }
 
 /**
@@ -2922,8 +2938,10 @@ function addTableColumn() {
     id: "column_" + Date.now(),
     name: String(columnName).trim(),
     isLocked: false,
-    fixedValue: null,
+    fixedValue: "",
     rowFixedValues: {},
+    formulaType: null,
+    role: null,
   });
 
   renderColumnsContainer();
@@ -3019,13 +3037,26 @@ function renderColumnsContainer() {
   container.innerHTML = templateCreationState.columns
     .map(
       (column) => `
-    <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
+    <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr auto auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
       <div>
         <input type="text" value="${column.name}" placeholder="Column name" 
         onchange="updateTableColumnName('${column.id}', this.value)"
         style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
         <div style="font-size: 11px; color: #666; margin-top: 6px;">${summarizeTableColumnConfig(column)}</div>
       </div>
+      <select onchange="updateColumnFormula('${column.id}', this.value)" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="" ${!column.formulaType ? "selected" : ""}>None</option>
+        <option value="MIN" ${column.formulaType === "MIN" ? "selected" : ""}>Min</option>
+        <option value="MAX" ${column.formulaType === "MAX" ? "selected" : ""}>Max</option>
+        <option value="AVERAGE" ${column.formulaType === "AVERAGE" ? "selected" : ""}>Average</option>
+        <option value="SUM" ${column.formulaType === "SUM" ? "selected" : ""}>Total</option>
+      </select>
+      <select onchange="updateColumnRole('${column.id}', this.value)" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="" ${!column.role ? "selected" : ""}>No role</option>
+        <option value="main" ${column.role === "main" ? "selected" : ""}>Main label</option>
+        <option value="target" ${column.role === "target" ? "selected" : ""}>Target</option>
+        <option value="achieved" ${column.role === "achieved" ? "selected" : ""}>Achieved</option>
+      </select>
       <button type="button" onclick="configureTableColumn('${column.id}')" 
         style="background: #2e7db1; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s;"
         onmouseover="this.style.background='#1a5490';"
@@ -3331,6 +3362,21 @@ function saveTemplateToDatabase() {
   if (templateType === "table" && templateCreationState.columns.length === 0) {
     showToast("Please add at least one column", "error");
     return;
+  }
+
+  if (templateType === "table") {
+    const roleCounts = templateCreationState.columns.reduce((acc, col) => {
+      const role = normalizeColumnRole(col.role);
+      if (role) acc[role] = (acc[role] || 0) + 1;
+      return acc;
+    }, {});
+    const duplicateRole = Object.keys(roleCounts).find(
+      (role) => roleCounts[role] > 1,
+    );
+    if (duplicateRole) {
+      showToast(`Only one column can be "${duplicateRole}"`, "error");
+      return;
+    }
   }
 
   const templateData = {
