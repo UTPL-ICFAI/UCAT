@@ -100,7 +100,13 @@ async function processDueTemplateSchedules() {
          repetition_type = EXCLUDED.repetition_type,
          repetition_days = EXCLUDED.repetition_days,
          assigned_at = NOW()`,
-      [projectId, row.id, row.user_id || null, repetitionType, JSON.stringify(repetitionDays)],
+      [
+        projectId,
+        row.id,
+        row.user_id || null,
+        repetitionType,
+        JSON.stringify(repetitionDays),
+      ],
     );
 
     await pool.query(
@@ -151,7 +157,13 @@ function normalizeFormulaType(value) {
   return null;
 }
 
-
+function normalizeColumnRole(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  if (["main", "target", "achieved"].includes(normalized)) return normalized;
+  return null;
+}
 
 function normalizeTemplateColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
@@ -168,6 +180,7 @@ function normalizeTemplateColumns(columnsInput) {
           fixedValue: "",
           rowFixedValues: {},
           formulaType: null,
+          role: null,
         };
       }
 
@@ -190,7 +203,10 @@ function normalizeTemplateColumns(columnsInput) {
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
-        formulaType: normalizeFormulaType(column.formulaType || column.formula_type),
+        formulaType: normalizeFormulaType(
+          column.formulaType || column.formula_type,
+        ),
+        role: normalizeColumnRole(column.role || column.columnRole),
       };
     })
     .filter(Boolean);
@@ -231,44 +247,37 @@ function appendSummaryRows(data, templateSnapshot) {
     columnDefs.find((c) => !c.formulaType)?.name || columnDefs[0].name;
 
   const grouped = new Map();
-  formulaColumns.forEach((col) => {
-    if (!grouped.has(col.formulaType)) grouped.set(col.formulaType, []);
-    grouped.get(col.formulaType).push(col.name);
-  });
-
   const summaryRows = [];
-  ["SUM", "AVERAGE", "MIN", "MAX"].forEach((formulaType) => {
-    if (!grouped.has(formulaType)) return;
-    const cols = grouped.get(formulaType) || [];
+  formulaColumns.forEach((col) => {
+    const values = cleanRows
+      .map((row) => parseFloat(row?.[col.name]))
+      .filter((value) => !Number.isNaN(value));
+    if (values.length === 0) return;
+
+    let result = null;
+    if (col.formulaType === "SUM") {
+      result = values.reduce((sum, value) => sum + value, 0);
+    } else if (col.formulaType === "AVERAGE") {
+      result = values.reduce((sum, value) => sum + value, 0) / values.length;
+    } else if (col.formulaType === "MIN") {
+      result = Math.min(...values);
+    } else if (col.formulaType === "MAX") {
+      result = Math.max(...values);
+    }
+
+    if (result === null) return;
+
+    const summaryLabel = `${summaryLabelForFormula(col.formulaType)} (${col.name})`;
     const summaryRow = {
-      __summaryType: formulaType,
-      __summaryLabel: summaryLabelForFormula(formulaType),
+      __summaryType: col.formulaType,
+      __summaryLabel: summaryLabel,
+      [col.name]: result,
     };
-
-    cols.forEach((colName) => {
-      const values = cleanRows
-        .map((row) => parseFloat(row?.[colName]))
-        .filter((value) => !Number.isNaN(value));
-      if (values.length === 0) return;
-
-      let result = null;
-      if (formulaType === "SUM") {
-        result = values.reduce((sum, value) => sum + value, 0);
-      } else if (formulaType === "AVERAGE") {
-        result = values.reduce((sum, value) => sum + value, 0) / values.length;
-      } else if (formulaType === "MIN") {
-        result = Math.min(...values);
-      } else if (formulaType === "MAX") {
-        result = Math.max(...values);
-      }
-
-      if (result !== null) summaryRow[colName] = result;
-    });
 
     if (labelColumn) {
       const existing = summaryRow[labelColumn];
       if (existing === undefined || existing === null || existing === "") {
-        summaryRow[labelColumn] = summaryRow.__summaryLabel;
+        summaryRow[labelColumn] = summaryLabel;
       }
     }
 
@@ -292,11 +301,19 @@ function applyTableColumnPolicies(data, templateSnapshot) {
     columnDefs.forEach((column) => {
       const rowFixedCandidate =
         column.rowFixedValues &&
-        Object.prototype.hasOwnProperty.call(column.rowFixedValues, String(rowIndex))
+        Object.prototype.hasOwnProperty.call(
+          column.rowFixedValues,
+          String(rowIndex),
+        )
           ? column.rowFixedValues[String(rowIndex)]
           : null;
 
-      if (rowFixedCandidate !== null && rowFixedCandidate !== undefined && rowFixedCandidate !== "" && rowFixedCandidate !== "null") {
+      if (
+        rowFixedCandidate !== null &&
+        rowFixedCandidate !== undefined &&
+        rowFixedCandidate !== "" &&
+        rowFixedCandidate !== "null"
+      ) {
         nextRow[column.name] = String(rowFixedCandidate);
         return;
       }
@@ -307,7 +324,10 @@ function applyTableColumnPolicies(data, templateSnapshot) {
       }
 
       const rawValue = row && typeof row === "object" ? row[column.name] : "";
-      nextRow[column.name] = rawValue === undefined || rawValue === null || rawValue === "null" ? "" : String(rawValue);
+      nextRow[column.name] =
+        rawValue === undefined || rawValue === null || rawValue === "null"
+          ? ""
+          : String(rawValue);
     });
 
     return nextRow;
@@ -429,6 +449,14 @@ function buildSingleSubmissionWorkbookTableType(sheetData, submission) {
       sheetData.push(columns.map((col) => row[col] || ""));
     });
   }
+
+  const graphData = extractGraphDataRows(snapshot, data);
+  if (graphData) {
+    sheetData.push([]);
+    sheetData.push(["Graph Data"]);
+    sheetData.push(graphData.headers);
+    graphData.rows.forEach((row) => sheetData.push(row));
+  }
 }
 
 function buildSingleSubmissionWorkbookFormType(sheetData, submission) {
@@ -461,7 +489,8 @@ function toCsvRow(values) {
 function isRestrictedColumn(columnDef) {
   if (!columnDef || typeof columnDef !== "object") return false;
   if (columnDef.isBlocked || columnDef.blocked) return true;
-  if (String(columnDef.visibility || "").toUpperCase() === "BLOCKED") return true;
+  if (String(columnDef.visibility || "").toUpperCase() === "BLOCKED")
+    return true;
   return false;
 }
 
@@ -470,8 +499,42 @@ function safeSheetName(base, fallback, suffix = "") {
     .replace(/[\\/*?:\[\]]/g, "_")
     .replace(/\s+/g, "_")
     .substring(0, 31);
-  const composed = (clean || fallback || "Sheet").substring(0, 31 - suffix.length);
+  const composed = (clean || fallback || "Sheet").substring(
+    0,
+    31 - suffix.length,
+  );
   return `${composed}${suffix}`.substring(0, 31);
+}
+
+function extractGraphDataRows(snapshot, data) {
+  const columnDefs = normalizeTemplateColumns(
+    snapshot.columns || data.columns || [],
+  );
+  const mainColumn = columnDefs.find((c) => c.role === "main");
+  const targetColumn = columnDefs.find((c) => c.role === "target");
+  const achievedColumn = columnDefs.find((c) => c.role === "achieved");
+
+  if (!mainColumn || !targetColumn || !achievedColumn) return null;
+
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const outputRows = [];
+
+  rows.forEach((row) => {
+    if (!row || row.__summaryType) return;
+    const label = row[mainColumn.name];
+    if (label === undefined || label === null || label === "") return;
+    const target = parseFloat(row[targetColumn.name]);
+    const achieved = parseFloat(row[achievedColumn.name]);
+    if (Number.isNaN(target) || Number.isNaN(achieved)) return;
+    outputRows.push([String(label), target, achieved]);
+  });
+
+  if (outputRows.length === 0) return null;
+
+  return {
+    headers: [mainColumn.name, targetColumn.name, achievedColumn.name],
+    rows: outputRows,
+  };
 }
 
 async function createApprovedSubmissionDocument(
@@ -894,6 +957,14 @@ router.get(
                 ...columns.map((c) => r[c] || ""),
               ]);
             });
+
+            const graphData = extractGraphDataRows(snapshot, data);
+            if (graphData) {
+              sheetData.push([]);
+              sheetData.push([`Graph Data (Submission ${item.id})`]);
+              sheetData.push(graphData.headers);
+              graphData.rows.forEach((row) => sheetData.push(row));
+            }
           });
         } else if (type === "row") {
           sheetData.push([
@@ -1011,8 +1082,12 @@ router.get(
       workbook.creator = "UCAT";
       workbook.created = new Date();
 
-      const approvedRows = result.rows.filter((row) => row.status === "approved");
-      const rejectedRows = result.rows.filter((row) => row.status === "rejected");
+      const approvedRows = result.rows.filter(
+        (row) => row.status === "approved",
+      );
+      const rejectedRows = result.rows.filter(
+        (row) => row.status === "rejected",
+      );
 
       approvedRows.forEach((submission, index) => {
         const snapshot = parseJson(submission.template_snapshot, {});
@@ -1039,7 +1114,9 @@ router.get(
         };
 
         if (templateType === "table") {
-          const columnDefs = normalizeTemplateColumns(snapshot.columns || data.columns || []);
+          const columnDefs = normalizeTemplateColumns(
+            snapshot.columns || data.columns || [],
+          );
           const columns = columnDefs.map((c) => c.name);
           const restrictedSet = new Set(
             columnDefs.filter((c) => isRestrictedColumn(c)).map((c) => c.name),
@@ -1081,6 +1158,14 @@ router.get(
               }
             });
           });
+
+          const graphData = extractGraphDataRows(snapshot, data);
+          if (graphData) {
+            ws.addRow([]);
+            ws.addRow(["Graph Data"]);
+            ws.addRow(graphData.headers);
+            graphData.rows.forEach((row) => ws.addRow(row));
+          }
         } else if (Array.isArray(data.fields)) {
           ws.addRow(["Field", "Value"]);
           ws.lastRow.font = { bold: true };
@@ -1088,7 +1173,9 @@ router.get(
             const blocked =
               field &&
               typeof field === "object" &&
-              (field.isBlocked || field.blocked || String(field.visibility || "").toUpperCase() === "BLOCKED");
+              (field.isBlocked ||
+                field.blocked ||
+                String(field.visibility || "").toUpperCase() === "BLOCKED");
             ws.addRow([
               field.label || field.name || "Field",
               blocked ? "[RESTRICTED]" : field.value || "",

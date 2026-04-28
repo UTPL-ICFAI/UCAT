@@ -2672,8 +2672,10 @@ function normalizeTableColumnsForDesigner(columnsInput) {
           id: `column_${Date.now()}_${index}`,
           name,
           isLocked: false,
-          fixedValue: null,
+          fixedValue: "",
           rowFixedValues: {},
+          formulaType: null,
+          role: null,
         };
       }
 
@@ -2686,13 +2688,19 @@ function normalizeTableColumnsForDesigner(columnsInput) {
         name,
         isLocked: !!column.isLocked,
         fixedValue:
-          column.fixedValue === undefined || column.fixedValue === null
-            ? null
+          column.fixedValue === undefined ||
+          column.fixedValue === null ||
+          column.fixedValue === "null"
+            ? ""
             : String(column.fixedValue),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        formulaType: normalizeFormulaTypeInput(
+          column.formulaType || column.formula_type,
+        ),
+        role: normalizeColumnRole(column.role || column.columnRole),
       };
     })
     .filter(Boolean)
@@ -2737,7 +2745,8 @@ function summarizeTableColumnConfig(column) {
   if (
     column.fixedValue !== null &&
     column.fixedValue !== undefined &&
-    column.fixedValue !== ""
+    column.fixedValue !== "" &&
+    column.fixedValue !== "null"
   ) {
     flags.push(`Fixed=${column.fixedValue}`);
   }
@@ -2745,7 +2754,46 @@ function summarizeTableColumnConfig(column) {
   if (rowFixedSummary) {
     flags.push(`Row fixed: ${rowFixedSummary}`);
   }
+  if (column.formulaType) flags.push(`Function=${column.formulaType}`);
+  if (column.role) flags.push(`Role=${column.role}`);
   return flags.length > 0 ? flags.join(" | ") : "Editable";
+}
+
+function normalizeFormulaTypeInput(value) {
+  if (!value) return null;
+  const normalized = String(value).toUpperCase();
+  if (normalized === "AVG") return "AVERAGE";
+  if (normalized === "TOTAL" || normalized === "SUM") return "SUM";
+  if (["MIN", "MAX", "AVERAGE"].includes(normalized)) return normalized;
+  return null;
+}
+
+function updateColumnFormula(columnId, value) {
+  const column = templateCreationState.columns.find((c) => c.id === columnId);
+  if (!column) return;
+  column.formulaType = normalizeFormulaTypeInput(value);
+  renderColumnsContainer();
+  updateTemplatePreview();
+}
+
+function normalizeColumnRole(value) {
+  if (!value) return null;
+  const normalized = String(value).toLowerCase();
+  if (["main", "target", "achieved"].includes(normalized)) return normalized;
+  return null;
+}
+
+function updateColumnRole(columnId, value) {
+  const role = normalizeColumnRole(value);
+  templateCreationState.columns.forEach((col) => {
+    if (col.id === columnId) {
+      col.role = role;
+    } else if (role && col.role === role) {
+      col.role = null;
+    }
+  });
+  renderColumnsContainer();
+  updateTemplatePreview();
 }
 
 /**
@@ -2922,8 +2970,10 @@ function addTableColumn() {
     id: "column_" + Date.now(),
     name: String(columnName).trim(),
     isLocked: false,
-    fixedValue: null,
+    fixedValue: "",
     rowFixedValues: {},
+    formulaType: null,
+    role: null,
   });
 
   renderColumnsContainer();
@@ -3019,13 +3069,26 @@ function renderColumnsContainer() {
   container.innerHTML = templateCreationState.columns
     .map(
       (column) => `
-    <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
+    <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr auto auto; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #e0e0e0; align-items: center;">
       <div>
         <input type="text" value="${column.name}" placeholder="Column name" 
         onchange="updateTableColumnName('${column.id}', this.value)"
         style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
         <div style="font-size: 11px; color: #666; margin-top: 6px;">${summarizeTableColumnConfig(column)}</div>
       </div>
+      <select onchange="updateColumnFormula('${column.id}', this.value)" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="" ${!column.formulaType ? "selected" : ""}>None</option>
+        <option value="MIN" ${column.formulaType === "MIN" ? "selected" : ""}>Min</option>
+        <option value="MAX" ${column.formulaType === "MAX" ? "selected" : ""}>Max</option>
+        <option value="AVERAGE" ${column.formulaType === "AVERAGE" ? "selected" : ""}>Average</option>
+        <option value="SUM" ${column.formulaType === "SUM" ? "selected" : ""}>Total</option>
+      </select>
+      <select onchange="updateColumnRole('${column.id}', this.value)" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="" ${!column.role ? "selected" : ""}>No role</option>
+        <option value="main" ${column.role === "main" ? "selected" : ""}>Main label</option>
+        <option value="target" ${column.role === "target" ? "selected" : ""}>Target</option>
+        <option value="achieved" ${column.role === "achieved" ? "selected" : ""}>Achieved</option>
+      </select>
       <button type="button" onclick="configureTableColumn('${column.id}')" 
         style="background: #2e7db1; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s;"
         onmouseover="this.style.background='#1a5490';"
@@ -3331,6 +3394,21 @@ function saveTemplateToDatabase() {
   if (templateType === "table" && templateCreationState.columns.length === 0) {
     showToast("Please add at least one column", "error");
     return;
+  }
+
+  if (templateType === "table") {
+    const roleCounts = templateCreationState.columns.reduce((acc, col) => {
+      const role = normalizeColumnRole(col.role);
+      if (role) acc[role] = (acc[role] || 0) + 1;
+      return acc;
+    }, {});
+    const duplicateRole = Object.keys(roleCounts).find(
+      (role) => roleCounts[role] > 1,
+    );
+    if (duplicateRole) {
+      showToast(`Only one column can be "${duplicateRole}"`, "error");
+      return;
+    }
   }
 
   const templateData = {

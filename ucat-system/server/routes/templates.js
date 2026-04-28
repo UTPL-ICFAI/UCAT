@@ -71,6 +71,14 @@ function normalizeFormulaType(value) {
   return null;
 }
 
+function normalizeColumnRole(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  if (["main", "target", "achieved"].includes(normalized)) return normalized;
+  return null;
+}
+
 function normalizeTemplateColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
 
@@ -89,6 +97,7 @@ function normalizeTemplateColumns(columnsInput) {
           formulaExpression: null,
           formulaScope: "row",
           formulaSourceColumns: [],
+          role: null,
         };
       }
 
@@ -126,13 +135,16 @@ function normalizeTemplateColumns(columnsInput) {
             ? "column"
             : "row",
         formulaSourceColumns: sourceColumns,
+        role: normalizeColumnRole(column.role || column.columnRole),
       };
     })
     .filter(Boolean);
 }
 
 function normalizeTemplateStatus(value) {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (["draft", "scheduled", "pushed"].includes(normalized)) {
     return normalized;
   }
@@ -280,7 +292,9 @@ router.post(
 
 router.get("/library", requireRole("superadmin"), async (req, res) => {
   try {
-    const statusFilter = String(req.query.status || "").trim().toLowerCase();
+    const statusFilter = String(req.query.status || "")
+      .trim()
+      .toLowerCase();
     const params = [];
     let query = `SELECT id, user_id, name, description, template_type, fields, rows, columns, row_limit, status, scheduled_at, scheduled_config, is_default, is_active, created_at, updated_at
        FROM templates
@@ -316,7 +330,9 @@ router.get("/library", requireRole("superadmin"), async (req, res) => {
     res.json({ success: true, templates });
   } catch (error) {
     console.error("Error fetching template library:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch template library" });
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch template library" });
   }
 });
 
@@ -449,7 +465,9 @@ router.post(
       });
     } catch (error) {
       console.error("Error pushing template:", error);
-      res.status(500).json({ success: false, error: "Failed to push template" });
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to push template" });
     }
   },
 );

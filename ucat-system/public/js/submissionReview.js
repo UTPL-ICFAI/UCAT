@@ -5,6 +5,7 @@
 
 let currentReviewSubmission = null;
 let pmSubmissionsCache = [];
+let submissionComparisonChart = null;
 
 function getAuthHeaders(extra = {}) {
   return {
@@ -212,6 +213,7 @@ function renderReviewModal(submission) {
   }
 
   contentEl.innerHTML = html;
+  renderSubmissionGraph(submission);
 }
 
 function renderSubmissionData(submission) {
@@ -263,13 +265,15 @@ function renderSubmissionData(submission) {
               row[col.name] === "null"
                 ? ""
                 : row[col.name];
-            if (
-              isSummary &&
-              labelColumn &&
-              col.name === labelColumn &&
-              (value === "" || value === null || value === undefined)
-            ) {
-              value = row.__summaryLabel || "";
+            if (isSummary && labelColumn && col.name === labelColumn) {
+              const summaryLabel = row.__summaryLabel || "";
+              if (summaryLabel) {
+                if (!value) {
+                  value = summaryLabel;
+                } else if (String(value) !== summaryLabel) {
+                  value = `${summaryLabel}: ${value}`;
+                }
+              }
             }
             return `<td style="padding: 8px; border: 1px solid #ddd; background-color: ${bgColor}; color: ${color};${isSummary ? " font-weight: 600; border-top: 2px solid #f0cf6d;" : ""}">${value}</td>`;
           })
@@ -285,6 +289,9 @@ function renderSubmissionData(submission) {
           <thead><tr style="background: #FFF9C4;">${header}</tr></thead>
           <tbody>${body}</tbody>
         </table>
+      </div>
+      <div id="submissionGraphContainer" style="margin-top: 16px; background: #fff; padding: 14px; border-radius: 6px; border: 1px solid #eee;">
+        <div style="color: #666; font-size: 12px;">Preparing graph...</div>
       </div>
     `;
   }
@@ -359,6 +366,126 @@ function renderSubmissionData(submission) {
       <pre style="margin: 0;">${JSON.stringify(data, null, 2)}</pre>
     </div>
   `;
+}
+
+function renderSubmissionGraph(submission) {
+  const container = document.getElementById("submissionGraphContainer");
+  if (!container) return;
+
+  if (submissionComparisonChart) {
+    submissionComparisonChart.destroy();
+    submissionComparisonChart = null;
+  }
+
+  const snapshot = submission.template_snapshot || submission.template || {};
+  const data = submission.data || {};
+  const templateType = snapshot.template_type || "form";
+
+  if (templateType !== "table" || !Array.isArray(data.rows)) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const columns = (snapshot.columns || data.columns || [])
+    .map((column) => {
+      if (typeof column === "string") {
+        return { name: column, role: null };
+      }
+      if (column && typeof column === "object") {
+        return {
+          name: column.name || "",
+          role: column.role || column.columnRole || null,
+        };
+      }
+      return { name: "", role: null };
+    })
+    .filter((c) => c.name);
+
+  console.log("Graph columns", columns);
+
+  const mainColumn = columns.find(
+    (c) => String(c.role).toLowerCase() === "main",
+  );
+  const targetColumn = columns.find(
+    (c) => String(c.role).toLowerCase() === "target",
+  );
+  const achievedColumn = columns.find(
+    (c) => String(c.role).toLowerCase() === "achieved",
+  );
+
+  console.log("Graph roles", {
+    mainColumn,
+    targetColumn,
+    achievedColumn,
+  });
+
+  if (!mainColumn || !targetColumn || !achievedColumn) {
+    container.innerHTML =
+      '<div style="color: #666; font-size: 12px;">Graph requires columns marked as Main label, Target, and Achieved.</div>';
+    return;
+  }
+
+  const labels = [];
+  const targets = [];
+  const achieved = [];
+
+  data.rows.forEach((row) => {
+    if (!row || row.__summaryType) return;
+    const label = row[mainColumn.name];
+    if (label === undefined || label === null || label === "") return;
+    const targetValue = parseFloat(row[targetColumn.name]);
+    const achievedValue = parseFloat(row[achievedColumn.name]);
+    if (Number.isNaN(targetValue) || Number.isNaN(achievedValue)) return;
+    labels.push(String(label));
+    targets.push(targetValue);
+    achieved.push(achievedValue);
+  });
+
+  if (labels.length === 0) {
+    container.innerHTML =
+      '<div style="color: #666; font-size: 12px;">No numeric data available for graph rendering.</div>';
+    return;
+  }
+
+  if (typeof Chart === "undefined") {
+    container.innerHTML =
+      '<div style="color: #666; font-size: 12px;">Chart library not loaded.</div>';
+    return;
+  }
+
+  container.innerHTML =
+    '<canvas id="submissionComparisonChart" height="120"></canvas>';
+  const ctx = document
+    .getElementById("submissionComparisonChart")
+    .getContext("2d");
+
+  submissionComparisonChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: targetColumn.name || "Target",
+          data: targets,
+          backgroundColor: "#90caf9",
+        },
+        {
+          label: achievedColumn.name || "Achieved",
+          data: achieved,
+          backgroundColor: "#a5d6a7",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: true,
+        },
+      },
+    },
+  });
 }
 
 function triggerDownloadFromBlob(blob, filename) {
