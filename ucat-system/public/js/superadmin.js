@@ -2234,17 +2234,7 @@ function loadAllDocuments() {
   // Get the JWT token from localStorage for authentication
   const token = localStorage.getItem("auth_token");
 
-  // Get user role from localStorage
-  const userRole = localStorage.getItem("user_role");
-
-  // Determine if we should filter documents by assigned projects
-  // Superadmin can see all documents, others see only their assigned projects
-  const shouldFilterByAssigned = userRole !== "superadmin" ? "true" : "false";
-
-  // Make API request to fetch documents with optional project filtering
-  const url =
-    "/api/documents" +
-    (shouldFilterByAssigned === "true" ? "?filter_by_assigned=true" : "");
+  const url = "/api/documents/superadmin-list";
 
   fetch(url, {
     // Set request headers with Authorization token
@@ -2330,7 +2320,7 @@ function displayDocumentsTable(documents) {
   if (!documents || documents.length === 0) {
     // Create a message row if no documents exist
     tableBody.innerHTML =
-      '<tr><td colspan="7" style="text-align: center;">No documents found</td></tr>';
+      '<tr><td colspan="6" style="text-align: center;">No documents found</td></tr>';
     // Exit function early if no documents
     return;
   }
@@ -2338,32 +2328,21 @@ function displayDocumentsTable(documents) {
   documents.forEach((doc) => {
     // Create a new table row element
     const row = document.createElement("tr");
-    // Get file extension from original filename
-    const fileExt = doc.original_name
-      ? doc.original_name.split(".").pop().toUpperCase()
-      : "UNKNOWN";
-    const docStatus = String(doc.doc_status || "draft").toLowerCase();
-    const statusLabel = docStatus
-      ? docStatus.charAt(0).toUpperCase() + docStatus.slice(1)
-      : "Draft";
-    const statusClass =
-      docStatus === "approved"
-        ? "success"
-        : docStatus === "rejected"
-          ? "danger"
-          : docStatus === "submitted" || docStatus === "pending"
-            ? "warning"
-            : "secondary";
+    const approvedAt = doc.approved_at || doc.submission_date || doc.created_at;
+    const submittedBy =
+      doc.submitted_by_name || doc.uploaded_by_name || "Unknown";
+    const approvedBy = doc.approved_by_name || "-";
+    const templateLabel =
+      doc.template_name || doc.title || doc.original_name || "Document";
     // Set the HTML content of the row with document data
     row.innerHTML = `
       <td>${doc.project_name || "Unknown"}</td>
-      <td>${doc.title || doc.original_name || "Untitled"}</td>
-      <td>${doc.uploaded_by_name || "Unknown"}</td>
-      <td>${new Date(doc.created_at).toLocaleDateString()}</td>
-      <td><span class="badge badge-${fileExt === "PDF" ? "danger" : fileExt === "ZIP" ? "info" : "warning"}">${fileExt}</span></td>
-      <td><span class="badge badge-${statusClass}">${statusLabel}</span></td>
+      <td>${templateLabel}</td>
+      <td>${submittedBy}</td>
+      <td>${approvedBy}</td>
+      <td>${approvedAt ? new Date(approvedAt).toLocaleDateString() : "-"}</td>
       <td>
-        <button class="btn btn-small" onclick="downloadDocument('${doc.file_path}', '${doc.original_name}')">Download</button>
+        <button class="btn btn-small" onclick="downloadDocument('${doc.file_path}', '${doc.original_name || "document"}')">Download</button>
       </td>
     `;
     // Append the row to the table body
@@ -2378,37 +2357,12 @@ function displayDocumentsTable(documents) {
 function filterDocuments() {
   // Get the project filter select value
   const projectValue = document.getElementById("documentProjectFilter").value;
-  // Get the document type filter select value
-  const typeValue = document.getElementById("documentTypeFilter").value;
-  // Filter documents based on project and type criteria
+  // Filter documents based on project criteria
   const filteredDocuments = allDocuments.filter((doc) => {
     // Check if document project matches filter (or all projects if filter is empty)
     const matchesProject = !projectValue || doc.project_id == projectValue;
-    // Check if document type matches filter (or all types if filter is empty)
-    let matchesType = true;
-    // Only check type if filter has a value
-    if (typeValue) {
-      // Get the file extension
-      const fileExt = doc.original_name
-        ? doc.original_name.split(".").pop().toLowerCase()
-        : "";
-      // Check based on type filter
-      if (typeValue === "pdf" && fileExt !== "pdf") {
-        matchesType = false;
-      } else if (
-        typeValue === "image" &&
-        !["png", "jpg", "jpeg", "gif"].includes(fileExt)
-      ) {
-        matchesType = false;
-      } else if (
-        typeValue === "archive" &&
-        !["zip", "rar", "7z"].includes(fileExt)
-      ) {
-        matchesType = false;
-      }
-    }
-    // Return true if both conditions are met
-    return matchesProject && matchesType;
+    // Return true if document matches project criteria
+    return matchesProject;
   });
   // Display the filtered documents in the table
   displayDocumentsTable(filteredDocuments);
@@ -2420,10 +2374,17 @@ function filterDocuments() {
  * @param {string} fileName - The original filename for download
  */
 function downloadDocument(filePath, fileName) {
+  if (!filePath) {
+    showToast("File path missing", "error");
+    return;
+  }
+  const normalizedPath = filePath.startsWith("/")
+    ? filePath
+    : "/" + filePath.replace(/^\/+/, "");
   // Create a new anchor element for download
   const link = document.createElement("a");
   // Set the href to the file path
-  link.href = filePath;
+  link.href = normalizedPath;
   // Set the download attribute with filename
   link.download = fileName || "document";
   // Append link to body temporarily
@@ -2580,48 +2541,55 @@ function rejectBudgetExtension(requestId) {
  * Makes POST request to /api/auth/logout
  */
 function logoutUser() {
-  // Make API request to logout
   fetch("/api/auth/logout", {
-    // Set HTTP method to POST
     method: "POST",
   })
-    // Handle the response
-    .then((response) => {
-      // Clear authentication token from localStorage
+    .then(() => {
       localStorage.removeItem("auth_token");
-      // Redirect to login page after logout
+      localStorage.removeItem("user_role");
       window.location.href = "/";
     })
-    // Catch and log any errors
     .catch((error) => {
-      // Log error to console
-      console.error("Error logging out:", error);
-      // Clear localStorage anyway
+      console.error("Logout failed:", error);
       localStorage.removeItem("auth_token");
-      // Redirect to home page
+      localStorage.removeItem("user_role");
       window.location.href = "/";
     });
 }
 
-/**
- * Display a toast notification message to the user
- * @param {string} message - The message to display
- * @param {string} type - The type of notification ('success', 'error', 'info')
- */
 function showToast(message, type) {
-  // Get the toast container element
-  const toastContainer = document.getElementById("toastContainer");
-  // Create a new div element for the toast
+  let toastContainer = document.getElementById("toastContainer");
+  if (!toastContainer) {
+    toastContainer = document.createElement("div");
+    toastContainer.id = "toastContainer";
+    toastContainer.style.position = "fixed";
+    toastContainer.style.top = "20px";
+    toastContainer.style.right = "20px";
+    toastContainer.style.zIndex = "9999";
+    toastContainer.style.display = "flex";
+    toastContainer.style.flexDirection = "column";
+    toastContainer.style.gap = "10px";
+    document.body.appendChild(toastContainer);
+  }
+
   const toast = document.createElement("div");
-  // Add CSS class for toast styling
   toast.className = `toast toast-${type}`;
-  // Set the toast message text
   toast.textContent = message;
-  // Append the toast to the container
+  toast.style.padding = "10px 14px";
+  toast.style.borderRadius = "6px";
+  toast.style.background =
+    type === "success"
+      ? "#e7f7ee"
+      : type === "error"
+        ? "#fdecea"
+        : type === "warning"
+          ? "#fff4e5"
+          : "#eef2ff";
+  toast.style.color = "#333";
+  toast.style.border = "1px solid #ddd";
+
   toastContainer.appendChild(toast);
-  // Remove the toast after 3 seconds (3000 milliseconds)
   setTimeout(() => {
-    // Remove the toast element from DOM
     toast.remove();
   }, 3000);
 }

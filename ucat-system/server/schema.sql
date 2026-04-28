@@ -9,6 +9,7 @@ DROP TABLE IF EXISTS budget_extension_requests CASCADE;
 DROP TABLE IF EXISTS expenses CASCADE;
 DROP TABLE IF EXISTS expense_entries CASCADE;
 DROP TABLE IF EXISTS troubleshoot_issues CASCADE;
+DROP TABLE IF EXISTS supervisor_goals CASCADE;
 DROP TABLE IF EXISTS documents CASCADE;
 DROP TABLE IF EXISTS site_images CASCADE;
 DROP TABLE IF EXISTS attendance CASCADE;
@@ -89,6 +90,24 @@ CREATE TABLE tasks (
 
 CREATE INDEX idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX idx_tasks_assigned_to ON tasks(assigned_to);
+
+-- Create supervisor goals table
+CREATE TABLE supervisor_goals (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  assigned_by INTEGER REFERENCES users(id),
+  assigned_to INTEGER REFERENCES users(id),
+  title VARCHAR(200) NOT NULL,
+  description TEXT,
+  due_date DATE,
+  status VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed')),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_supervisor_goals_project_id ON supervisor_goals(project_id);
+CREATE INDEX idx_supervisor_goals_assigned_to ON supervisor_goals(assigned_to);
+CREATE INDEX idx_supervisor_goals_assigned_by ON supervisor_goals(assigned_by);
 
 -- Create workers table
 CREATE TABLE workers (
@@ -329,7 +348,7 @@ CREATE TABLE daily_submissions (
   review_comment TEXT,
   reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(project_id, template_id, submission_date)
+  UNIQUE(project_id, template_id, submitted_by, submission_date)
 );
 
 CREATE INDEX idx_daily_submissions_project_id ON daily_submissions(project_id);

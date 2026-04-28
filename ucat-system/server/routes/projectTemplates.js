@@ -53,6 +53,34 @@ async function ensureSubmissionTableCompatibility() {
       ADD COLUMN IF NOT EXISTS template_snapshot JSONB NOT NULL DEFAULT '{}';
   `);
 
+  submissionSchemaEnsuringPromise = submissionSchemaEnsuringPromise.then(() =>
+    pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'daily_submissions'::regclass
+            AND conname = 'daily_submissions_project_id_template_id_submission_date_key'
+        ) THEN
+          ALTER TABLE daily_submissions
+            DROP CONSTRAINT daily_submissions_project_id_template_id_submission_date_key;
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'daily_submissions'::regclass
+            AND conname = 'daily_submissions_project_id_template_id_submitted_by_submission_date_key'
+        ) THEN
+          ALTER TABLE daily_submissions
+            ADD CONSTRAINT daily_submissions_project_id_template_id_submitted_by_submission_date_key
+            UNIQUE (project_id, template_id, submitted_by, submission_date);
+        END IF;
+      END $$;
+    `),
+  );
+
   try {
     await submissionSchemaEnsuringPromise;
     submissionSchemaEnsured = true;
@@ -756,6 +784,29 @@ router.get(
     try {
       const { projectId } = req.params;
 
+      if (req.user.role !== "superadmin") {
+        const assignmentResult = await pool.query(
+          `SELECT 1
+           FROM project_assignments
+           WHERE project_id = $1 AND user_id = $2
+             AND role IN ('project_manager','site_engineer')`,
+          [projectId, req.user.id],
+        );
+
+        if (assignmentResult.rows.length === 0) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Not assigned to this project" });
+        }
+      }
+
+      const params = [projectId];
+      let whereClause = "ds.project_id = $1";
+      if (req.user.role === "site_engineer") {
+        params.push(req.user.id);
+        whereClause += ` AND ds.submitted_by = $${params.length}`;
+      }
+
       const result = await pool.query(
         `SELECT
          ds.id,
@@ -780,9 +831,9 @@ router.get(
        JOIN templates t ON ds.template_id = t.id
        JOIN users u ON ds.submitted_by = u.id
        LEFT JOIN users ru ON ds.reviewed_by = ru.id
-       WHERE ds.project_id = $1
+       WHERE ${whereClause}
        ORDER BY ds.submission_date DESC, ds.created_at DESC`,
-        [projectId],
+        params,
       );
 
       res.json({
@@ -817,6 +868,19 @@ router.get(
     try {
       const { projectId } = req.params;
       const format = (req.query.format || "xlsx").toString().toLowerCase();
+
+      if (req.user.role !== "superadmin") {
+        const assignmentResult = await pool.query(
+          `SELECT 1 FROM project_assignments WHERE project_id = $1 AND user_id = $2 AND role = 'project_manager'`,
+          [projectId, req.user.id],
+        );
+
+        if (assignmentResult.rows.length === 0) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Not assigned to this project" });
+        }
+      }
 
       const rowsResult = await pool.query(
         `SELECT
@@ -1315,6 +1379,33 @@ router.get(
       }
 
       const row = result.rows[0];
+
+      if (req.user.role !== "superadmin") {
+        const assignmentResult = await pool.query(
+          `SELECT 1
+           FROM project_assignments
+           WHERE project_id = $1 AND user_id = $2
+             AND role IN ('project_manager','site_engineer')`,
+          [row.project_id, req.user.id],
+        );
+
+        if (assignmentResult.rows.length === 0) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Not assigned to this project" });
+        }
+
+        if (
+          req.user.role === "site_engineer" &&
+          row.submitted_by !== req.user.id
+        ) {
+          return res.status(403).json({
+            success: false,
+            error: "Not authorized to view this submission",
+          });
+        }
+      }
+
       res.json({
         success: true,
         data: {
@@ -1692,7 +1783,7 @@ router.post(
          status
        )
        VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
-       ON CONFLICT (project_id, template_id, submission_date)
+       ON CONFLICT (project_id, template_id, submitted_by, submission_date)
        DO UPDATE SET
          data = EXCLUDED.data,
          template_snapshot = EXCLUDED.template_snapshot,

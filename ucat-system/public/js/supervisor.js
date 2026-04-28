@@ -128,6 +128,8 @@ function navigateSection(sectionId) {
   if (sectionId === "attendance") {
     loadAttendanceProjects();
     document.getElementById("attendanceDate").valueAsDate = new Date();
+  } else if (sectionId === "goals") {
+    loadSupervisorGoals();
   } else if (sectionId === "upload") {
     loadUploadProjects();
   } else if (sectionId === "issues") {
@@ -152,6 +154,7 @@ async function loadProjects() {
     const attendanceSelect = document.getElementById("attendanceProjectSelect");
     const uploadSelect = document.getElementById("uploadProjectSelect");
     const issueSelect = document.getElementById("issueProjectSelect");
+    const goalsSelect = document.getElementById("goalsProjectSelect");
 
     allProjects.forEach((project) => {
       const option = document.createElement("option");
@@ -160,6 +163,7 @@ async function loadProjects() {
       attendanceSelect.appendChild(option.cloneNode(true));
       uploadSelect.appendChild(option.cloneNode(true));
       issueSelect.appendChild(option.cloneNode(true));
+      if (goalsSelect) goalsSelect.appendChild(option.cloneNode(true));
     });
   } catch (error) {
     console.error("Error loading projects:", error);
@@ -302,6 +306,20 @@ async function loadUploadProjects() {
   if (document.getElementById("uploadProjectSelect").options.length === 1) {
     showToast("No projects available", "error");
   }
+
+  const uploadSelect = document.getElementById("uploadProjectSelect");
+  const gallery = document.getElementById("recentUploadsGallery");
+  if (gallery) {
+    gallery.innerHTML =
+      '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #999;">Select a project to view images</div>';
+  }
+
+  if (uploadSelect && !uploadSelect.dataset.listenerAttached) {
+    uploadSelect.addEventListener("change", () => {
+      loadRecentUploads();
+    });
+    uploadSelect.dataset.listenerAttached = "true";
+  }
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -372,11 +390,24 @@ async function uploadImages() {
 }
 
 async function loadRecentUploads() {
+  const projectId = document.getElementById("uploadProjectSelect").value;
+  const gallery = document.getElementById("recentUploadsGallery");
+
+  if (!projectId) {
+    if (gallery) {
+      gallery.innerHTML =
+        '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #999;">Select a project to view images</div>';
+    }
+    return;
+  }
+
   try {
-    const response = await fetch(`/api/images?uploaded_by=${currentUser.id}`);
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(`/api/images?project_id=${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     allImages = await response.json();
 
-    const gallery = document.getElementById("recentUploadsGallery");
     gallery.innerHTML = allImages
       .slice(0, 12)
       .map(
@@ -398,6 +429,77 @@ async function loadRecentUploads() {
     }
   } catch (error) {
     console.error("Error loading uploads:", error);
+  }
+}
+
+// ─── Goals ───────────────────────────────────────────────────────────────────
+
+async function loadSupervisorGoals() {
+  const projectId = document.getElementById("goalsProjectSelect").value;
+  const tbody = document.getElementById("supervisorGoalsTableBody");
+
+  if (!projectId) {
+    tbody.innerHTML =
+      '<tr><td colspan="5">Select a project to view goals</td></tr>';
+    return;
+  }
+
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(
+      `/api/supervisor-goals/my?project_id=${projectId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const goals = await response.json();
+
+    tbody.innerHTML =
+      goals.length === 0
+        ? '<tr><td colspan="5">No goals assigned yet</td></tr>'
+        : goals
+            .map((goal) => {
+              const isCompleted = goal.status === "completed";
+              const actionBtn = isCompleted
+                ? ""
+                : `<button class="btn btn-small" onclick="markGoalCompleted(${goal.id})">Mark Completed</button>`;
+              return `
+              <tr>
+                <td>${goal.title}</td>
+                <td>${goal.assigned_by_name || "Site Engineer"}</td>
+                <td>${formatDateShort(goal.due_date)}</td>
+                <td><span class="badge badge-${isCompleted ? "success" : goal.status === "in_progress" ? "warning" : "primary"}">${goal.status}</span></td>
+                <td>${actionBtn}</td>
+              </tr>
+            `;
+            })
+            .join("");
+  } catch (error) {
+    console.error("Error loading goals:", error);
+    tbody.innerHTML = '<tr><td colspan="5">Failed to load goals</td></tr>';
+  }
+}
+
+async function markGoalCompleted(goalId) {
+  showLoading(true);
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(`/api/supervisor-goals/${goalId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to update goal");
+    }
+    showToast("Goal marked as completed", "success");
+    loadSupervisorGoals();
+  } catch (error) {
+    showToast(error.message || "Failed to update goal", "error");
+  } finally {
+    showLoading(false);
   }
 }
 
@@ -651,7 +753,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   loadProjects();
-  loadRecentUploads();
 
   const style = document.createElement("style");
   style.textContent = `

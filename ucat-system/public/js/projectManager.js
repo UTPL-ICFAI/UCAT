@@ -317,7 +317,7 @@ async function loadProjectTasks() {
         (task) => `
       <tr>
         <td>${task.title}</td>
-        <td>${task.assigned_to || "Unassigned"}</td>
+        <td>${task.assigned_to_name || task.assigned_to_user_id || task.assigned_to || "Unassigned"}</td>
         <td>${formatDateShort(task.due_date)}</td>
         <td><span class="badge badge-${task.status === "completed" ? "success" : task.status === "overdue" ? "danger" : "primary"}">${task.status}</span></td>
         <td><button class="btn btn-small btn-secondary" onclick="editTaskStatus(${task.id})">Edit</button></td>

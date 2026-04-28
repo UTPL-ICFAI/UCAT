@@ -29,7 +29,11 @@ router.get("/stats", requireRole("superadmin"), async (req, res) => {
         (SELECT COUNT(*) FROM users) as total_users,
         (SELECT COUNT(*) FROM troubleshoot_issues WHERE status = 'open') as open_issues,
         (SELECT COUNT(*) FROM workers) as total_workers,
-        (SELECT COUNT(*) FROM documents) as total_documents
+        (SELECT COUNT(*)
+         FROM daily_submissions ds
+         JOIN documents d ON ds.document_id = d.id
+         WHERE ds.status = 'approved'
+           AND d.doc_type = 'template_submission') as total_documents
     `);
 
     // Extract single result row from optimized query

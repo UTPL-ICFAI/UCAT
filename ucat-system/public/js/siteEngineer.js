@@ -8,6 +8,7 @@ let allImages = [];
 let allIssues = [];
 let allTasks = [];
 let allCommunications = [];
+let allSupervisorGoals = [];
 
 function showToast(message, type = "info") {
   const container =
@@ -189,6 +190,8 @@ async function selectProject(projectId) {
 
   // Load all project data
   loadProjectTasks();
+  loadSupervisorGoalOptions();
+  loadAssignedSupervisorGoals();
   loadProjectWorkers();
   loadPendingImages();
   loadProjectIssues();
@@ -200,6 +203,131 @@ async function selectProject(projectId) {
 
   const attendanceDateEl = document.getElementById("attendanceDate");
   if (attendanceDateEl) attendanceDateEl.valueAsDate = new Date();
+}
+
+// ─── Supervisor Goals ───────────────────────────────────────────────────────
+
+async function loadSupervisorGoalOptions() {
+  const select = document.getElementById("goalSupervisorSelect");
+  if (!select) return;
+
+  if (!currentProjectId) {
+    select.innerHTML = '<option value="">Choose a supervisor...</option>';
+    const workerSelect = document.getElementById("supervisorSelect");
+    if (workerSelect) {
+      workerSelect.innerHTML = '<option value="">Select Supervisor...</option>';
+    }
+    return;
+  }
+
+  const token = localStorage.getItem("auth_token");
+  const response = await fetch(
+    `/api/workers/supervisors?project_id=${currentProjectId}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+
+  const supervisors = response.ok ? await response.json() : [];
+  const options =
+    supervisors.length === 0
+      ? '<option value="">No Supervisors Assigned to Project</option>'
+      : '<option value="">Choose a supervisor...</option>' +
+        supervisors
+          .map((sup) => `<option value="${sup.id}">${sup.name}</option>`)
+          .join("");
+
+  select.innerHTML = options;
+
+  const workerSelect = document.getElementById("supervisorSelect");
+  if (workerSelect) {
+    workerSelect.innerHTML = options;
+  }
+}
+
+async function loadAssignedSupervisorGoals() {
+  const tbody = document.getElementById("assignedGoalsTableBody");
+  if (!tbody) return;
+
+  if (!currentProjectId) {
+    tbody.innerHTML =
+      '<tr><td colspan="4">Select a project to view goals</td></tr>';
+    return;
+  }
+
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(
+      `/api/supervisor-goals/my-assigned?project_id=${currentProjectId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    allSupervisorGoals = await response.json();
+
+    tbody.innerHTML =
+      allSupervisorGoals.length === 0
+        ? '<tr><td colspan="4">No goals assigned yet</td></tr>'
+        : allSupervisorGoals
+            .map(
+              (goal) => `
+          <tr>
+            <td>${goal.supervisor_name || "Supervisor"}</td>
+            <td>${goal.title}</td>
+            <td>${formatDateShort(goal.due_date)}</td>
+            <td><span class="badge badge-${goal.status === "completed" ? "success" : goal.status === "in_progress" ? "warning" : "primary"}">${goal.status}</span></td>
+          </tr>
+        `,
+            )
+            .join("");
+  } catch (error) {
+    console.error("Error loading supervisor goals:", error);
+    tbody.innerHTML = '<tr><td colspan="4">Failed to load goals</td></tr>';
+  }
+}
+
+async function submitSupervisorGoal(e) {
+  e.preventDefault();
+
+  const supervisorId = document.getElementById("goalSupervisorSelect").value;
+  const title = document.getElementById("goalTitle").value.trim();
+  const description = document.getElementById("goalDescription").value.trim();
+  const dueDate = document.getElementById("goalDueDate").value;
+
+  if (!supervisorId || !title) {
+    showToast("Please select supervisor and enter title", "error");
+    return;
+  }
+
+  showLoading(true);
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch("/api/supervisor-goals", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        project_id: currentProjectId,
+        assigned_to: parseInt(supervisorId),
+        title,
+        description: description || null,
+        due_date: dueDate || null,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to assign goal");
+    }
+
+    document.getElementById("assignGoalForm").reset();
+    showToast("Goal assigned successfully", "success");
+    loadAssignedSupervisorGoals();
+  } catch (error) {
+    showToast(error.message || "Failed to assign goal", "error");
+  } finally {
+    showLoading(false);
+  }
 }
 
 function goBackToProjects() {
@@ -363,26 +491,6 @@ async function loadProjectWorkers() {
     }
 
     allWorkers = await response.json();
-
-    // Load supervisors for dropdown
-    const supResponse = await fetch(
-      `/api/workers/supervisors?project_id=${currentProjectId}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
-    const supervisors = supResponse.ok ? await supResponse.json() : [];
-
-    const supSelect = document.getElementById("supervisorSelect");
-    if (supSelect) {
-      supSelect.innerHTML =
-        supervisors.length === 0
-          ? '<option value="">No Supervisors Assigned to Project</option>'
-          : '<option value="">Select Supervisor...</option>' +
-            supervisors
-              .map((s) => `<option value="${s.id}">${s.name}</option>`)
-              .join("");
-    }
 
     const tbody = document.getElementById("workersTableBody");
     const html = allWorkers
@@ -888,6 +996,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const raiseIssueForm = document.getElementById("raiseIssueForm");
   if (raiseIssueForm)
     raiseIssueForm.addEventListener("submit", handleRaiseIssue);
+
+  const assignGoalForm = document.getElementById("assignGoalForm");
+  if (assignGoalForm) {
+    assignGoalForm.addEventListener("submit", submitSupervisorGoal);
+  }
 
   // Project search
   const projectSearch = document.getElementById("projectSearch");

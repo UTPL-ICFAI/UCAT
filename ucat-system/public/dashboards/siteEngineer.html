@@ -1,303 +1,507 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UCAT - Site Engineer Dashboard</title>
-  <link rel="stylesheet" href="../css/main.css">
-  <link rel="stylesheet" href="../css/dashboard.css">
-</head>
-<body>
-  <div class="dashboard">
-    <!-- Sidebar - same pattern as PM -->
-    <div class="sidebar">
-      <div class="sidebar-header">UCAT SE</div>
-      <div class="sidebar-user">
-        <div class="user-name" id="userName">Site Engineer</div>
-        <div class="user-role">Site Engineer</div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UCAT - Site Engineer Dashboard</title>
+    <link rel="stylesheet" href="../css/main.css" />
+    <link rel="stylesheet" href="../css/dashboard.css" />
+  </head>
+  <body>
+    <div class="dashboard">
+      <!-- Sidebar - same pattern as PM -->
+      <div class="sidebar">
+        <div class="sidebar-header">UCAT SE</div>
+        <div class="sidebar-user">
+          <div class="user-name" id="userName">Site Engineer</div>
+          <div class="user-role">Site Engineer</div>
+        </div>
+        <div style="padding: 15px 20px">
+          <input
+            type="text"
+            id="projectSearch"
+            placeholder="Search projects..."
+            style="
+              width: 100%;
+              padding: 8px;
+              border: 1px solid #ddd;
+              border-radius: 4px;
+            "
+          />
+        </div>
+        <ul class="sidebar-nav" id="projectList">
+          <li><a href="#" class="nav-link">Loading projects...</a></li>
+        </ul>
+        <div class="sidebar-footer">
+          <button class="logout-btn" onclick="logoutUser()">Logout</button>
+        </div>
       </div>
-      <div style="padding: 15px 20px;">
-        <input type="text" id="projectSearch" placeholder="Search projects..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-      </div>
-      <ul class="sidebar-nav" id="projectList">
-        <li><a href="#" class="nav-link">Loading projects...</a></li>
-      </ul>
-      <div class="sidebar-footer">
-        <button class="logout-btn" onclick="logoutUser()">Logout</button>
-      </div>
-    </div>
 
-    <!-- Main Content -->
-    <div class="main-content" id="mainContent">
-      <div class="top-bar">
-        <h1 class="page-title" id="pageTitle">My Projects</h1>
-      </div>
-
-      <!-- Projects Grid -->
-      <div id="projectsGrid" class="grid grid-2">
-        <div style="text-align: center; padding: 40px; color: #999;">Loading projects...</div>
-      </div>
-
-      <!-- Project Detail View -->
-      <div id="projectDetail" style="display: none;">
-        <div class="card">
-          <div class="card-header">Project Details</div>
-          <div id="projectInfo"></div>
+      <!-- Main Content -->
+      <div class="main-content" id="mainContent">
+        <div class="top-bar">
+          <h1 class="page-title" id="pageTitle">My Projects</h1>
         </div>
 
-        <!-- Back Button -->
-        <div style="margin: 15px 0;">
-          <button class="btn btn-secondary" onclick="goBackToProjects()">← Back to Projects</button>
+        <!-- Projects Grid -->
+        <div id="projectsGrid" class="grid grid-2">
+          <div style="text-align: center; padding: 40px; color: #999">
+            Loading projects...
+          </div>
         </div>
 
-        <!-- Tabs -->
-        <div class="tabs" style="margin-top: 10px;">
-          <button class="tab active" onclick="switchTab(event, 'my-tasks')">My Tasks</button>
-          <button class="tab" onclick="switchTab(event, 'worker-mgmt')">Worker Management</button>
-          <button class="tab" onclick="switchTab(event, 'daily-report-tab')">Daily Report</button>
-          <button class="tab" onclick="switchTab(event, 'attendance')">Attendance</button>
-          <button class="tab" onclick="switchTab(event, 'image-approval')">Image Approval</button>
-          <button class="tab" onclick="switchTab(event, 'se-chat')">Chat</button>
-          <button class="tab" onclick="switchTab(event, 'se-issues')">Issues</button>
-        </div>
-
-        <!-- My Tasks Tab -->
-        <div id="my-tasks" class="tab-content active">
-          <table id="myTasksTable">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="myTasksTableBody">
-              <tr><td colspan="4">Loading tasks...</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Worker Management Tab -->
-        <div id="worker-mgmt" class="tab-content">
-          <button class="btn" style="margin-bottom: 15px;" onclick="openAddWorkerModal()">+ Add Worker</button>
-          <table id="workersTable">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Age</th>
-                <th>Gender</th>
-                <th>Supervisor</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="workersTableBody">
-              <tr><td colspan="6">Loading workers...</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Daily Report Tab -->
-        <div id="daily-report-tab" class="tab-content">
-          <div class="card" style="margin-bottom: 20px;">
-            <div class="card-header">Daily Report Submission</div>
-            <div style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
-              <div class="form-group">
-                <label>Select Project *</label>
-                <select id="submissionProjectSelect" class="form-control">
-                  <option value="">Choose a project...</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Select Template *</label>
-                <select id="submissionTemplateSelect" class="form-control">
-                  <option value="">Choose a template...</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Submission Date *</label>
-                <input type="date" id="submissionDate" class="form-control">
-              </div>
-            </div>
+        <!-- Project Detail View -->
+        <div id="projectDetail" style="display: none">
+          <div class="card">
+            <div class="card-header">Project Details</div>
+            <div id="projectInfo"></div>
           </div>
 
-          <div class="card" id="templateFormContainer" style="display: none;">
-            <div class="card-header" id="templateFormTitle">Template</div>
-            <form id="dynamicTemplateForm" style="padding: 20px;"></form>
-            <div style="padding: 0 20px 20px; display: flex; gap: 10px;">
-              <button type="submit" form="dynamicTemplateForm" class="btn btn-primary">Submit Report</button>
-              <button type="reset" form="dynamicTemplateForm" class="btn btn-secondary">Clear</button>
-            </div>
+          <!-- Back Button -->
+          <div style="margin: 15px 0">
+            <button class="btn btn-secondary" onclick="goBackToProjects()">
+              ← Back to Projects
+            </button>
           </div>
 
-          <div class="card" style="margin-top: 20px;">
-            <div class="card-header">Submission History</div>
-            <table id="submissionsTable">
+          <!-- Tabs -->
+          <div class="tabs" style="margin-top: 10px">
+            <button class="tab active" onclick="switchTab(event, 'my-tasks')">
+              My Tasks
+            </button>
+            <button class="tab" onclick="switchTab(event, 'assign-goals')">
+              Assign Goals
+            </button>
+            <button class="tab" onclick="switchTab(event, 'worker-mgmt')">
+              Worker Management
+            </button>
+            <button class="tab" onclick="switchTab(event, 'daily-report-tab')">
+              Daily Report
+            </button>
+            <button class="tab" onclick="switchTab(event, 'attendance')">
+              Attendance
+            </button>
+            <button class="tab" onclick="switchTab(event, 'image-approval')">
+              Image Approval
+            </button>
+            <button class="tab" onclick="switchTab(event, 'se-chat')">
+              Chat
+            </button>
+            <button class="tab" onclick="switchTab(event, 'se-issues')">
+              Issues
+            </button>
+          </div>
+
+          <!-- My Tasks Tab -->
+          <div id="my-tasks" class="tab-content active">
+            <table id="myTasksTable">
               <thead>
                 <tr>
-                  <th>Template</th>
-                  <th>Date</th>
+                  <th>Title</th>
+                  <th>Due Date</th>
                   <th>Status</th>
-                  <th>Submitted</th>
                   <th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="submissionsTableBody">
-                <tr><td colspan="5">No submissions yet</td></tr>
+              <tbody id="myTasksTableBody">
+                <tr>
+                  <td colspan="4">Loading tasks...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Assign Goals Tab -->
+          <div id="assign-goals" class="tab-content">
+            <div class="card">
+              <div class="card-header">Assign Goal to Supervisor</div>
+              <form id="assignGoalForm" style="padding: 20px">
+                <div class="form-group">
+                  <label>Supervisor *</label>
+                  <select
+                    id="goalSupervisorSelect"
+                    class="form-control"
+                    required
+                  >
+                    <option value="">Choose a supervisor...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Title *</label>
+                  <input
+                    type="text"
+                    id="goalTitle"
+                    class="form-control"
+                    required
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Description</label>
+                  <textarea
+                    id="goalDescription"
+                    class="form-control"
+                  ></textarea>
+                </div>
+                <div class="form-group">
+                  <label>Due Date</label>
+                  <input type="date" id="goalDueDate" class="form-control" />
+                </div>
+                <div class="btn-group">
+                  <button type="submit" class="btn btn-primary">
+                    Assign Goal
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div class="card" style="margin-top: 20px">
+              <div class="card-header">Goals Assigned by You</div>
+              <table id="assignedGoalsTable">
+                <thead>
+                  <tr>
+                    <th>Supervisor</th>
+                    <th>Title</th>
+                    <th>Due Date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="assignedGoalsTableBody">
+                  <tr>
+                    <td colspan="4">Select a project to view goals</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Worker Management Tab -->
+          <div id="worker-mgmt" class="tab-content">
+            <button
+              class="btn"
+              style="margin-bottom: 15px"
+              onclick="openAddWorkerModal()"
+            >
+              + Add Worker
+            </button>
+            <table id="workersTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Age</th>
+                  <th>Gender</th>
+                  <th>Supervisor</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="workersTableBody">
+                <tr>
+                  <td colspan="6">Loading workers...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Daily Report Tab -->
+          <div id="daily-report-tab" class="tab-content">
+            <div class="card" style="margin-bottom: 20px">
+              <div class="card-header">Daily Report Submission</div>
+              <div
+                style="
+                  padding: 20px;
+                  display: grid;
+                  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                  gap: 15px;
+                "
+              >
+                <div class="form-group">
+                  <label>Select Project *</label>
+                  <select id="submissionProjectSelect" class="form-control">
+                    <option value="">Choose a project...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Select Template *</label>
+                  <select id="submissionTemplateSelect" class="form-control">
+                    <option value="">Choose a template...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Submission Date *</label>
+                  <input type="date" id="submissionDate" class="form-control" />
+                </div>
+              </div>
+            </div>
+
+            <div class="card" id="templateFormContainer" style="display: none">
+              <div class="card-header" id="templateFormTitle">Template</div>
+              <form id="dynamicTemplateForm" style="padding: 20px"></form>
+              <div style="padding: 0 20px 20px; display: flex; gap: 10px">
+                <button
+                  type="submit"
+                  form="dynamicTemplateForm"
+                  class="btn btn-primary"
+                >
+                  Submit Report
+                </button>
+                <button
+                  type="reset"
+                  form="dynamicTemplateForm"
+                  class="btn btn-secondary"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px">
+              <div class="card-header">Submission History</div>
+              <table id="submissionsTable">
+                <thead>
+                  <tr>
+                    <th>Template</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="submissionsTableBody">
+                  <tr>
+                    <td colspan="5">No submissions yet</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Attendance Tab -->
+          <div id="attendance" class="tab-content">
+            <div class="form-group">
+              <label>Select Date:</label>
+              <input
+                type="date"
+                id="attendanceDate"
+                onchange="loadAttendanceForDate()"
+              />
+            </div>
+            <table id="attendanceTable">
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th>Marked By</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceTableBody">
+                <tr>
+                  <td colspan="4">Select a date to view attendance</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Image Approval Tab -->
+          <div id="image-approval" class="tab-content">
+            <h3>Pending Images for Approval</h3>
+            <div class="gallery-grid" id="pendingImagesGallery"></div>
+          </div>
+
+          <!-- Chat Tab -->
+          <div id="se-chat" class="tab-content">
+            <div
+              style="
+                background: #f9f9f9;
+                padding: 15px;
+                border-radius: 4px;
+                height: 400px;
+                overflow-y: auto;
+                margin-bottom: 15px;
+              "
+              id="seChatMessages"
+            ></div>
+            <div style="display: flex; gap: 10px">
+              <textarea
+                id="seMessageInput"
+                placeholder="Type a message..."
+                style="flex: 1; height: 60px; resize: none"
+              ></textarea>
+              <button
+                class="btn btn-primary"
+                onclick="seSendMessage()"
+                style="height: 60px; align-self: flex-end"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+
+          <!-- Issues Tab -->
+          <div id="se-issues" class="tab-content">
+            <button
+              class="btn"
+              style="margin-bottom: 15px"
+              onclick="openRaiseIssueModal()"
+            >
+              Raise Issue
+            </button>
+            <table id="seIssuesTable">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="seIssuesTableBody">
+                <tr>
+                  <td colspan="4">Loading issues...</td>
+                </tr>
               </tbody>
             </table>
           </div>
         </div>
-
-        <!-- Attendance Tab -->
-        <div id="attendance" class="tab-content">
-          <div class="form-group">
-            <label>Select Date:</label>
-            <input type="date" id="attendanceDate" onchange="loadAttendanceForDate()">
-          </div>
-          <table id="attendanceTable">
-            <thead>
-              <tr>
-                <th>Worker</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Marked By</th>
-              </tr>
-            </thead>
-            <tbody id="attendanceTableBody">
-              <tr><td colspan="4">Select a date to view attendance</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Image Approval Tab -->
-        <div id="image-approval" class="tab-content">
-          <h3>Pending Images for Approval</h3>
-          <div class="gallery-grid" id="pendingImagesGallery"></div>
-        </div>
-
-        <!-- Chat Tab -->
-        <div id="se-chat" class="tab-content">
-          <div style="background: #f9f9f9; padding: 15px; border-radius: 4px; height: 400px; overflow-y: auto; margin-bottom: 15px;" id="seChatMessages"></div>
-          <div style="display: flex; gap: 10px;">
-            <textarea id="seMessageInput" placeholder="Type a message..." style="flex: 1; height: 60px; resize: none;"></textarea>
-            <button class="btn btn-primary" onclick="seSendMessage()" style="height: 60px; align-self: flex-end;">Send</button>
-          </div>
-        </div>
-
-        <!-- Issues Tab -->
-        <div id="se-issues" class="tab-content">
-          <button class="btn" style="margin-bottom: 15px;" onclick="openRaiseIssueModal()">Raise Issue</button>
-          <table id="seIssuesTable">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="seIssuesTableBody">
-              <tr><td colspan="4">Loading issues...</td></tr>
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Add Worker Modal -->
-  <div id="addWorkerModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <span>Add Worker</span>
-        <button class="modal-close" onclick="closeModal('addWorkerModal')">&times;</button>
-      </div>
-      <form id="addWorkerForm">
-        <div class="form-group">
-          <label>Worker Name *</label>
-          <input type="text" name="name" required placeholder="Full name">
+    <!-- Add Worker Modal -->
+    <div id="addWorkerModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span>Add Worker</span>
+          <button class="modal-close" onclick="closeModal('addWorkerModal')">
+            &times;
+          </button>
         </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <form id="addWorkerForm">
           <div class="form-group">
-            <label>Age *</label>
-            <input type="number" name="age" required min="18" max="99" placeholder="Worker age">
+            <label>Worker Name *</label>
+            <input type="text" name="name" required placeholder="Full name" />
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px">
+            <div class="form-group">
+              <label>Age *</label>
+              <input
+                type="number"
+                name="age"
+                required
+                min="18"
+                max="99"
+                placeholder="Worker age"
+              />
+            </div>
+            <div class="form-group">
+              <label>Gender *</label>
+              <select name="gender" required>
+                <option value="">Select...</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
           </div>
           <div class="form-group">
-            <label>Gender *</label>
-            <select name="gender" required>
-              <option value="">Select...</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
-              <option value="other">Other</option>
+            <label>Supervisor *</label>
+            <select name="supervisor_id" id="supervisorSelect" required>
+              <option value="">Select Supervisor...</option>
             </select>
           </div>
-        </div>
-        <div class="form-group">
-          <label>Supervisor *</label>
-          <select name="supervisor_id" id="supervisorSelect" required>
-            <option value="">Select Supervisor...</option>
-          </select>
-        </div>
-        <div class="btn-group">
-          <button type="submit" class="btn btn-primary">Add Worker</button>
-          <button type="button" class="btn btn-secondary" onclick="closeModal('addWorkerModal')">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Raise Issue Modal -->
-  <div id="raiseIssueModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <span>Raise Issue</span>
-        <button class="modal-close" onclick="closeModal('raiseIssueModal')">&times;</button>
-      </div>
-      <form id="raiseIssueForm">
-        <div class="form-group">
-          <label>Title *</label>
-          <input type="text" name="title" required>
-        </div>
-        <div class="form-group">
-          <label>Description</label>
-          <textarea name="description"></textarea>
-        </div>
-        <div class="btn-group">
-          <button type="submit" class="btn">Raise Issue</button>
-          <button type="button" class="btn btn-secondary" onclick="closeModal('raiseIssueModal')">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- View Submission Modal -->
-  <div id="viewSubmissionModal" class="modal">
-    <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
-      <div class="modal-header">
-        <span id="submissionModalTitle">Submission Detail</span>
-        <button class="modal-close" onclick="closeModal('viewSubmissionModal')">&times;</button>
-      </div>
-      <div style="padding: 20px;">
-        <div id="submissionModalContent"></div>
-        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; display: flex; gap: 10px;">
-          <button class="btn btn-secondary" onclick="closeModal('viewSubmissionModal')" style="margin-left: auto;">Close</button>
-        </div>
+          <div class="btn-group">
+            <button type="submit" class="btn btn-primary">Add Worker</button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick="closeModal('addWorkerModal')"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       </div>
     </div>
-  </div>
 
-  <!-- Loading Overlay -->
-  <div class="loading-overlay" id="loadingOverlay">
-    <div class="loading-content">
-      <div class="spinner"></div>
-      <p>Loading...</p>
+    <!-- Raise Issue Modal -->
+    <div id="raiseIssueModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span>Raise Issue</span>
+          <button class="modal-close" onclick="closeModal('raiseIssueModal')">
+            &times;
+          </button>
+        </div>
+        <form id="raiseIssueForm">
+          <div class="form-group">
+            <label>Title *</label>
+            <input type="text" name="title" required />
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <textarea name="description"></textarea>
+          </div>
+          <div class="btn-group">
+            <button type="submit" class="btn">Raise Issue</button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick="closeModal('raiseIssueModal')"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
-  </div>
 
-  <script src="../js/auth.js"></script>
-  <script src="../js/siteEngineer.js"></script>
-  <script src="../js/templateSubmissions.js"></script>
-</body>
+    <!-- View Submission Modal -->
+    <div id="viewSubmissionModal" class="modal">
+      <div
+        class="modal-content"
+        style="max-width: 900px; max-height: 90vh; overflow-y: auto"
+      >
+        <div class="modal-header">
+          <span id="submissionModalTitle">Submission Detail</span>
+          <button
+            class="modal-close"
+            onclick="closeModal('viewSubmissionModal')"
+          >
+            &times;
+          </button>
+        </div>
+        <div style="padding: 20px">
+          <div id="submissionModalContent"></div>
+          <div
+            style="
+              margin-top: 20px;
+              padding-top: 20px;
+              border-top: 1px solid #ddd;
+              display: flex;
+              gap: 10px;
+            "
+          >
+            <button
+              class="btn btn-secondary"
+              onclick="closeModal('viewSubmissionModal')"
+              style="margin-left: auto"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="loading-content">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+    </div>
+
+    <script src="../js/auth.js"></script>
+    <script src="../js/siteEngineer.js"></script>
+    <script src="../js/templateSubmissions.js"></script>
+  </body>
 </html>
