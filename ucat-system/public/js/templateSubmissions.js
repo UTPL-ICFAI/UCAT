@@ -55,16 +55,6 @@ function normalizeTemplate(template) {
   };
 }
 
-function normalizeFormulaType(value) {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  if (!normalized) return null;
-  if (normalized === "AVG") return "AVERAGE";
-  if (["SUM", "TOTAL", "AVERAGE", "MIN", "MAX"].includes(normalized)) {
-    return normalized;
-  }
-  return null;
-}
 
 function normalizeTableColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
@@ -78,12 +68,8 @@ function normalizeTableColumns(columnsInput) {
           id: `column_${Date.now()}_${index}`,
           name,
           isLocked: false,
-          fixedValue: null,
+          fixedValue: "",
           rowFixedValues: {},
-          formulaType: null,
-          formulaExpression: null,
-          formulaScope: "row",
-          formulaSourceColumns: [],
         };
       }
 
@@ -91,41 +77,22 @@ function normalizeTableColumns(columnsInput) {
       const name = String(column.name || "").trim();
       if (!name) return null;
 
+      const fVal = column.fixedValue;
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
         isLocked: !!column.isLocked,
         fixedValue:
-          column.fixedValue === undefined || column.fixedValue === null
-            ? null
-            : String(column.fixedValue),
+          fVal === undefined || fVal === null || fVal === "null"
+            ? ""
+            : String(fVal),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
-        formulaType: normalizeFormulaType(column.formulaType),
-        formulaExpression:
-          column.formulaExpression === undefined ||
-          column.formulaExpression === null
-            ? null
-            : String(column.formulaExpression),
-        formulaScope:
-          String(column.formulaScope || "row").toLowerCase() === "column"
-            ? "column"
-            : "row",
-        formulaSourceColumns: Array.isArray(column.formulaSourceColumns)
-          ? column.formulaSourceColumns
-              .map((entry) => String(entry || "").trim())
-              .filter(Boolean)
-          : [],
       };
     })
-    .filter(Boolean)
-    .map((column) => ({
-      ...column,
-      isLocked:
-        !!column.isLocked || !!column.formulaType || !!column.formulaExpression,
-    }));
+    .filter(Boolean);
 }
 
 function getTemplateColumns() {
@@ -133,123 +100,6 @@ function getTemplateColumns() {
   return normalizeTableColumns(template.columns);
 }
 
-function toNumeric(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function aggregateFormula(values, formulaType) {
-  if (!Array.isArray(values) || values.length === 0) return "";
-
-  switch (formulaType) {
-    case "SUM":
-    case "TOTAL":
-      return String(values.reduce((acc, item) => acc + item, 0));
-    case "AVERAGE":
-      return String(values.reduce((acc, item) => acc + item, 0) / values.length);
-    case "MIN":
-      return String(Math.min(...values));
-    case "MAX":
-      return String(Math.max(...values));
-    default:
-      return "";
-  }
-}
-
-function letterToIndex(letters) {
-  let index = 0;
-  String(letters || "")
-    .toUpperCase()
-    .split("")
-    .forEach((char) => {
-      index = index * 26 + (char.charCodeAt(0) - 64);
-    });
-  return Math.max(0, index - 1);
-}
-
-function valueForFormulaRef(token, rowIndex, rows, columns) {
-  const match = String(token || "").toUpperCase().match(/^([A-Z]+)(\d+)?$/);
-  if (!match) return null;
-  const colIdx = letterToIndex(match[1]);
-  const col = columns[colIdx];
-  if (!col) return null;
-  const targetRowIdx = match[2] ? parseInt(match[2], 10) - 1 : rowIndex;
-  const row = rows[targetRowIdx];
-  if (!row) return null;
-  const input = row.querySelector(`input[data-column="${col.name}"]`);
-  if (!input) return null;
-  return toNumeric(input.value);
-}
-
-function evaluateFormulaExpression(expression, rowIndex, rows, columns) {
-  const raw = String(expression || "").trim();
-  if (!raw) return "";
-  const expr = raw.startsWith("=") ? raw.slice(1).trim() : raw;
-
-  const ifMatch = expr.match(/^IF\((.+),(.+),(.+)\)$/i);
-  if (ifMatch) {
-    const condition = ifMatch[1]
-      .replace(/([A-Z]+\d*)/g, (token) => {
-        const value = valueForFormulaRef(token, rowIndex, rows, columns);
-        return value === null ? "0" : String(value);
-      })
-      .replace(/=/g, "==")
-      .replace(/>==/g, ">=")
-      .replace(/<==/g, "<=")
-      .replace(/!==/g, "!=");
-
-    let pass = false;
-    try {
-      pass = !!Function(`return (${condition});`)();
-    } catch (error) {
-      pass = false;
-    }
-    const trueValue = ifMatch[2].trim().replace(/^"|"$/g, "");
-    const falseValue = ifMatch[3].trim().replace(/^"|"$/g, "");
-    return pass ? trueValue : falseValue;
-  }
-
-  const sumMatch = expr.match(/^SUM\(([A-Z]+\d*):([A-Z]+\d*)\)$/i);
-  if (sumMatch) {
-    const startCell = String(sumMatch[1]).toUpperCase();
-    const endCell = String(sumMatch[2]).toUpperCase();
-    const startCol = letterToIndex(startCell.match(/^([A-Z]+)/)[1]);
-    const endCol = letterToIndex(endCell.match(/^([A-Z]+)/)[1]);
-    const startRow = startCell.match(/(\d+)$/)
-      ? parseInt(startCell.match(/(\d+)$/)[1], 10) - 1
-      : 0;
-    const endRow = endCell.match(/(\d+)$/)
-      ? parseInt(endCell.match(/(\d+)$/)[1], 10) - 1
-      : rows.length - 1;
-
-    let total = 0;
-    for (let r = Math.max(0, startRow); r <= Math.min(endRow, rows.length - 1); r += 1) {
-      for (let c = Math.max(0, startCol); c <= Math.min(endCol, columns.length - 1); c += 1) {
-        const col = columns[c];
-        if (!col) continue;
-        const input = rows[r].querySelector(`input[data-column="${col.name}"]`);
-        if (!input) continue;
-        const numeric = toNumeric(input.value);
-        if (numeric !== null) total += numeric;
-      }
-    }
-    return String(total);
-  }
-
-  const arithmetic = expr.replace(/([A-Z]+\d*)/g, (token) => {
-    const value = valueForFormulaRef(token, rowIndex, rows, columns);
-    return value === null ? "0" : String(value);
-  });
-
-  try {
-    const result = Function(`return (${arithmetic});`)();
-    if (result === null || result === undefined || Number.isNaN(result)) return "";
-    return String(result);
-  } catch (error) {
-    return "";
-  }
-}
 
 function applyColumnPoliciesToRow(tr, rowIndex) {
   const columns = getTemplateColumns();
@@ -264,24 +114,23 @@ function applyColumnPoliciesToRow(tr, rowIndex) {
       String(rowIndex),
     );
 
-    let enforcedValue = null;
+    let enforcedValue = "";
     if (hasRowFixed) {
       enforcedValue = rowFixedValues[String(rowIndex)];
-    } else if (
-      column.fixedValue !== null &&
-      column.fixedValue !== undefined &&
-      column.fixedValue !== ""
-    ) {
+    } else if (column.fixedValue !== "") {
       enforcedValue = column.fixedValue;
     }
 
-    if (enforcedValue !== null && enforcedValue !== undefined) {
+    if (enforcedValue !== "" && enforcedValue !== "null") {
       input.value = String(enforcedValue);
+    } else if (!input.value || input.value === "null") {
+      input.value = "";
     }
 
-    const shouldDisable = !!column.formulaType || !!column.isLocked;
+    const shouldDisable = !!column.isLocked;
     input.disabled = shouldDisable;
-    input.style.background = shouldDisable ? "#f3f4f6" : "";
+    input.style.background = shouldDisable ? "#FFCDD2" : "#FFFFFF";
+    input.style.color = shouldDisable ? "#333" : "black";
     input.style.cursor = shouldDisable ? "not-allowed" : "";
   });
 }
@@ -298,73 +147,6 @@ function reindexTemplateTableRows() {
   });
 }
 
-function recomputeTemplateTableFormulas() {
-  const tableBody = document.getElementById("templateTableBody");
-  if (!tableBody) return;
-
-  const rows = Array.from(tableBody.querySelectorAll("tr"));
-  const columns = getTemplateColumns();
-  const columnNames = columns.map((column) => column.name);
-
-  columns.forEach((column) => {
-    if (!column.formulaType) return;
-
-    const sources = Array.isArray(column.formulaSourceColumns)
-      ? column.formulaSourceColumns.filter(Boolean)
-      : [];
-    const effectiveSources =
-      sources.length > 0
-        ? sources
-        : columnNames.filter((name) => name !== column.name);
-
-    if (column.formulaScope === "column") {
-      const acrossValues = [];
-      rows.forEach((tr) => {
-        effectiveSources.forEach((source) => {
-          const sourceInput = tr.querySelector(`input[data-column="${source}"]`);
-          if (!sourceInput) return;
-          const numeric = toNumeric(sourceInput.value);
-          if (numeric !== null) acrossValues.push(numeric);
-        });
-      });
-
-      const aggregate = aggregateFormula(acrossValues, column.formulaType);
-      rows.forEach((tr) => {
-        const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
-        if (formulaInput) formulaInput.value = aggregate;
-      });
-      return;
-    }
-
-    rows.forEach((tr) => {
-      const perRowValues = effectiveSources
-        .map((source) => {
-          const sourceInput = tr.querySelector(`input[data-column="${source}"]`);
-          return sourceInput ? toNumeric(sourceInput.value) : null;
-        })
-        .filter((value) => value !== null);
-
-      const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
-      if (formulaInput) {
-        formulaInput.value = aggregateFormula(perRowValues, column.formulaType);
-      }
-    });
-  });
-
-  columns.forEach((column) => {
-    if (!column.formulaExpression) return;
-    rows.forEach((tr, rowIndex) => {
-      const formulaInput = tr.querySelector(`input[data-column="${column.name}"]`);
-      if (!formulaInput) return;
-      formulaInput.value = evaluateFormulaExpression(
-        column.formulaExpression,
-        rowIndex,
-        rows,
-        columns,
-      );
-    });
-  });
-}
 
 /**
  * Load projects for submission project select
@@ -523,21 +305,13 @@ function renderTableTemplate(template) {
     <div style="overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
       <table style="width: 100%; border-collapse: collapse;" id="templateTable">
         <thead>
-          <tr style="background: #f0f0f0;">
+          <tr style="background: #FFF9C4;">
             ${columns
               .map((col) => {
-                const meta = [];
-                if (col.formulaType) {
-                  meta.push(`${col.formulaType}${col.formulaScope === "column" ? " (across rows)" : ""}`);
-                }
-                if (col.formulaExpression) {
-                  meta.push(`expr`);
-                }
-                if (col.isLocked) meta.push("locked");
-                return `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px;">${col.name}${meta.length > 0 ? `<div style="font-size: 10px; color: #666; font-weight: 500; margin-top: 2px;">${meta.join(" | ")}</div>` : ""}</th>`;
+                return `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px; color: #333;">${col.name}</th>`;
               })
               .join("")}
-            <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600; font-size: 12px;">Action</th>
+            <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600; font-size: 12px; color: #333;">Action</th>
           </tr>
         </thead>
         <tbody id="templateTableBody"></tbody>
@@ -567,7 +341,7 @@ function addTemplateTableRow() {
       .map(
         (col) => `
       <td style="padding: 8px; border: 1px solid #ddd;">
-        <input type="text" class="form-control" data-column="${col.name}" data-row-index="${rowIndex}" oninput="recomputeTemplateTableFormulas()" />
+        <input type="text" class="form-control" data-column="${col.name}" data-row-index="${rowIndex}" />
       </td>
     `,
       )
@@ -579,7 +353,6 @@ function addTemplateTableRow() {
 
   tableBody.appendChild(row);
   applyColumnPoliciesToRow(row, rowIndex);
-  recomputeTemplateTableFormulas();
 }
 
 function removeTemplateTableRow(buttonEl) {
@@ -587,7 +360,6 @@ function removeTemplateTableRow(buttonEl) {
   if (!tr) return;
   tr.remove();
   reindexTemplateTableRows();
-  recomputeTemplateTableFormulas();
 }
 
 /**
@@ -706,7 +478,6 @@ function handleTemplateSubmit(e) {
   const data = {};
 
   if (template.template_type === "table") {
-    recomputeTemplateTableFormulas();
     const tableBody = document.getElementById("templateTableBody");
     const rows = [];
     const columns = getTemplateColumns();
@@ -720,12 +491,12 @@ function handleTemplateSubmit(e) {
         row.querySelectorAll("input[data-column]").forEach((input) => {
           const column = input.getAttribute("data-column");
           const value = input.value;
-          rowData[column] = value;
-          if (String(value).trim() !== "") hasValue = true;
+          rowData[column] = value === null || value === undefined || value === "null" ? "" : String(value);
+          if (rowData[column].trim() !== "") hasValue = true;
         });
 
         columnNames.forEach((columnName) => {
-          if (!Object.prototype.hasOwnProperty.call(rowData, columnName)) {
+          if (!Object.prototype.hasOwnProperty.call(rowData, columnName) || rowData[columnName] === null || rowData[columnName] === undefined || rowData[columnName] === "null") {
             rowData[columnName] = "";
           }
         });
@@ -1148,7 +919,6 @@ function prefillTemplateFormFromSubmission(submission) {
         });
       });
       reindexTemplateTableRows();
-      recomputeTemplateTableFormulas();
     }
   }
 }
