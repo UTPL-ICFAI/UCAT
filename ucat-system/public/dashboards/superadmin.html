@@ -60,6 +60,11 @@
           <!-- Documents label text -->
           <span>Documents</span>
         </a>
+        <!-- Budget Extensions navigation link -->
+        <a href="#budgetExtensionsSection" class="nav-link" data-section="budgetExtensionsSection">
+          <i class="fas fa-coins"></i>
+          <span>Budget Extensions</span>
+        </a>
         <!-- Templates navigation link with icon -->
         <a href="#templates" class="nav-link" data-section="templates" onclick="setTimeout(loadTemplates, 100)">
           <!-- Templates section icon -->
@@ -516,6 +521,36 @@
           <tbody id="documentsTable">
             <!-- Document rows populated by JavaScript -->
           </tbody>
+        </table>
+      </section>
+      <!-- Budget Extension Requests section -->
+      <section id="budgetExtensionsSection" class="content-section" style="display: none;">
+        <h2>Budget Extension Requests</h2>
+        <div class="manage-users-top-bar">
+          <select id="budgetRequestProjectFilter" class="filter-select">
+            <option value="">All Projects</option>
+          </select>
+          <select id="budgetRequestStatusFilter" class="filter-select">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Requested By</th>
+              <th>Current Budget</th>
+              <th>Requested</th>
+              <th>Usage at Request</th>
+              <th>Status</th>
+              <th>Submitted</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="budgetRequestsTable"></tbody>
         </table>
       </section>
       <!-- Templates section (hidden by default) - Professional spreadsheet-based template design -->

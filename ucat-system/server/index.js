@@ -21,6 +21,8 @@ import dailyReportsRoutes from './routes/dailyReports.js';
 import templatesRoutes from './routes/templates.js';
 import projectTemplatesRoutes from './routes/projectTemplates.js';
 import dailyWorkersRoutes from './routes/dailyWorkers.js';
+import expensesRoutes from './routes/expenses.js';
+import budgetExtensionsRoutes from './routes/budgetExtensions.js';
 
 dotenv.config();
 
@@ -56,6 +58,8 @@ app.use('/api/daily-reports', verifyToken, dailyReportsRoutes);
 app.use('/api/templates', verifyToken, templatesRoutes);
 app.use('/api/project-templates', verifyToken, projectTemplatesRoutes);
 app.use('/api/daily-workers', verifyToken, dailyWorkersRoutes);
+app.use('/api/expenses', verifyToken, expensesRoutes);
+app.use('/api/budget-extensions', verifyToken, budgetExtensionsRoutes);
 app.use('/api/sse', sseRoutes);
 
 // Health check

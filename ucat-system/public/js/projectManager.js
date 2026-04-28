@@ -10,6 +10,13 @@ let allIssues = [];
 let allCommunications = [];
 let sseConnection = null;
 let pmBudgetChart = null;
+let pmCategoryChart = null;
+let expenseCache = [];
+let expenseSummaryCache = null;
+let budgetRequestCache = [];
+
+const BUDGET_WARNING_THRESHOLD = 0.75;
+const BUDGET_CRITICAL_THRESHOLD = 1.0;
 
 function showToast(message, type = "info") {
   const container =
@@ -90,6 +97,17 @@ function formatDateShort(dateStr) {
   }).format(date);
 }
 
+function formatCurrency(amount) {
+  const value = Number(amount) || 0;
+  return "₹" + value.toFixed(2);
+}
+
+function getBudgetProgressColor(percentUsed) {
+  if (percentUsed >= BUDGET_CRITICAL_THRESHOLD) return "#b71c1c";
+  if (percentUsed >= BUDGET_WARNING_THRESHOLD) return "#ff9800";
+  return "#2e7d32";
+}
+
 function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
@@ -113,6 +131,50 @@ async function logoutUser() {
     localStorage.removeItem("auth_token");
     window.location.href = "/";
   }
+}
+
+function initSSE() {
+  if (sseConnection) {
+    sseConnection.close();
+  }
+
+  sseConnection = new EventSource("/api/sse");
+
+  sseConnection.addEventListener("budget-warning", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    showToast(
+      `Budget warning: ${Math.round((payload.percent_used || 0) * 100)}% used`,
+      "warning",
+    );
+  });
+
+  sseConnection.addEventListener("budget-critical", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    showToast(
+      `Budget exceeded: ${Math.round((payload.percent_used || 0) * 100)}% used`,
+      "error",
+    );
+  });
+
+  sseConnection.addEventListener("budget-extension-approved", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    const budgetText = payload.total_budget
+      ? ` New budget: ${formatCurrency(payload.total_budget)}.`
+      : "";
+    showToast(`Budget extension approved.${budgetText}`, "success");
+    refreshExpenseWorkspace();
+  });
+
+  sseConnection.addEventListener("budget-extension-rejected", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    const note = payload.review_note ? ` ${payload.review_note}` : "";
+    showToast(`Budget extension request rejected.${note}`, "warning");
+    refreshExpenseWorkspace();
+  });
+
+  sseConnection.onerror = () => {
+    console.warn("SSE connection lost");
+  };
 }
 
 async function loadProjects() {
@@ -214,6 +276,7 @@ async function selectProject(projectId) {
   loadProjectCommunications();
   loadBudgetTracking();
   loadTeamInfo();
+  refreshExpenseWorkspace();
 
   if (typeof loadPMSubmissions === "function") {
     loadPMSubmissions();
@@ -466,64 +529,415 @@ async function sendMessage() {
 }
 
 async function loadBudgetTracking() {
+  await refreshExpenseWorkspace();
+}
+
+async function refreshExpenseWorkspace() {
+  if (!currentProjectId) return;
+
   try {
-    const response = await fetch(`/api/budget?project_id=${currentProjectId}`);
-    const budgetData = await response.json();
+    const [expenses, summaryPayload, requests] = await Promise.all([
+      fetch(`/api/expenses?project_id=${currentProjectId}`).then((r) => r.json()),
+      fetch(`/api/expenses/summary?project_id=${currentProjectId}`).then((r) =>
+        r.json(),
+      ),
+      fetch(`/api/budget-extensions?project_id=${currentProjectId}`).then((r) =>
+        r.json(),
+      ),
+    ]);
 
-    const project = allProjects.find((p) => p.id === currentProjectId);
-    const total = parseFloat(project?.total_budget || 0);
-    const spent = budgetData.reduce(
-      (sum, item) => sum + parseFloat(item.amount_spent),
-      0,
-    );
+    expenseCache = Array.isArray(expenses) ? expenses : [];
+    expenseSummaryCache = summaryPayload?.summary || {
+      totalBudget: 0,
+      totalSpent: 0,
+      remaining: 0,
+      percentUsed: 0,
+    };
+    budgetRequestCache = Array.isArray(requests) ? requests : [];
 
-    document.getElementById("totalBudget").textContent = "₹" + total.toFixed(2);
-    document.getElementById("spentAmount").textContent = "₹" + spent.toFixed(2);
-    document.getElementById("remainingAmount").textContent =
-      "₹" + (total - spent).toFixed(2);
-    document.getElementById("budgetProgress").style.width = total
-      ? (spent / total) * 100 + "%"
-      : "0%";
-
-    // Chart
-    const dateMap = {};
-    budgetData.forEach((item) => {
-      if (!dateMap[item.date]) dateMap[item.date] = 0;
-      dateMap[item.date] += parseFloat(item.amount_spent);
-    });
-
-    const sortedDates = Object.keys(dateMap).sort();
-    const last30Days = sortedDates.slice(Math.max(0, sortedDates.length - 30));
-    const values = last30Days.map((date) => dateMap[date]);
-
-    const ctx = document.getElementById("pmBudgetChart");
-    if (pmBudgetChart) pmBudgetChart.destroy();
-
-    pmBudgetChart = new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: last30Days,
-        datasets: [
-          {
-            label: "Daily Spend (₹)",
-            data: values,
-            borderColor: "#0F6E56",
-            backgroundColor: "rgba(15, 110, 86, 0.1)",
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: true, position: "top" } },
-        scales: { y: { beginAtZero: true } },
-      },
-    });
+    renderExpenseList(expenseCache);
+    renderExpenseCategoryBadges(summaryPayload?.byCategory || []);
+    renderBudgetOverview(expenseSummaryCache);
+    renderExpenseCharts(summaryPayload || {});
+    renderBudgetRequests(budgetRequestCache);
   } catch (error) {
-    console.error("Error loading budget:", error);
+    console.error("Error refreshing expenses:", error);
+  }
+}
+
+function renderBudgetOverview(summary) {
+  const total = summary.totalBudget || 0;
+  const spent = summary.totalSpent || 0;
+  const remaining = total - spent;
+  const percentUsed = summary.percentUsed || 0;
+
+  document.getElementById("totalBudget").textContent = formatCurrency(total);
+  document.getElementById("spentAmount").textContent = formatCurrency(spent);
+  document.getElementById("remainingAmount").textContent =
+    formatCurrency(remaining);
+
+  const progressPercent = total ? Math.min(percentUsed * 100, 100) : 0;
+  const progressEl = document.getElementById("budgetProgress");
+  progressEl.style.width = `${progressPercent}%`;
+  progressEl.style.background = getBudgetProgressColor(percentUsed);
+
+  const statusBadge = document.getElementById("budgetStatusBadge");
+  if (percentUsed >= BUDGET_CRITICAL_THRESHOLD) {
+    statusBadge.textContent = "Over Budget";
+    statusBadge.className = "badge badge-danger";
+  } else if (percentUsed >= BUDGET_WARNING_THRESHOLD) {
+    statusBadge.textContent = "Near Limit";
+    statusBadge.className = "badge badge-warning";
+  } else {
+    statusBadge.textContent = "Healthy";
+    statusBadge.className = "badge badge-success";
+  }
+
+  const requestBtn = document.getElementById("requestBudgetExtensionBtn");
+  const hasPending = budgetRequestCache.some(
+    (request) => request.status === "pending",
+  );
+
+  if (percentUsed >= BUDGET_CRITICAL_THRESHOLD) {
+    requestBtn.style.display = "inline-block";
+    requestBtn.disabled = hasPending;
+    requestBtn.textContent = hasPending
+      ? "Extension Request Pending"
+      : "Request Budget Extension";
+  } else {
+    requestBtn.style.display = "none";
+  }
+}
+
+function renderExpenseCharts(summaryPayload) {
+  const periodRows = Array.isArray(summaryPayload.byPeriod)
+    ? summaryPayload.byPeriod
+    : [];
+  const categoryRows = Array.isArray(summaryPayload.byCategory)
+    ? summaryPayload.byCategory
+    : [];
+
+  const periodLabels = periodRows.map((row) => {
+    const periodDate = row.period ? new Date(row.period) : null;
+    return periodDate
+      ? periodDate.toLocaleDateString("en-IN", {
+          year: "numeric",
+          month: "short",
+        })
+      : "N/A";
+  });
+  const periodValues = periodRows.map((row) => Number(row.total) || 0);
+
+  const budgetCtx = document.getElementById("pmBudgetChart");
+  if (pmBudgetChart) pmBudgetChart.destroy();
+  pmBudgetChart = new Chart(budgetCtx, {
+    type: "line",
+    data: {
+      labels: periodLabels,
+      datasets: [
+        {
+          label: "Monthly Spend (₹)",
+          data: periodValues,
+          borderColor: "#0F6E56",
+          backgroundColor: "rgba(15, 110, 86, 0.1)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: true, position: "top" } },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
+
+  const categoryCtx = document.getElementById("pmCategoryChart");
+  if (pmCategoryChart) pmCategoryChart.destroy();
+  pmCategoryChart = new Chart(categoryCtx, {
+    type: "doughnut",
+    data: {
+      labels: categoryRows.map((row) => row.category || "Other"),
+      datasets: [
+        {
+          data: categoryRows.map((row) => Number(row.total) || 0),
+          backgroundColor: ["#1a5490", "#ffb300", "#4caf50", "#f44336"],
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: true, position: "bottom" } },
+    },
+  });
+}
+
+function renderExpenseCategoryBadges(categoryRows) {
+  const container = document.getElementById("expenseCategoryBadges");
+  if (!container) return;
+
+  if (!categoryRows || categoryRows.length === 0) {
+    container.innerHTML =
+      '<span style="color:#999; font-size: 12px;">No expenses yet</span>';
+    return;
+  }
+
+  container.innerHTML = categoryRows
+    .map(
+      (row) => `
+      <span class="badge badge-secondary" style="font-size: 11px;">${row.category || "Other"}: ${formatCurrency(row.total)}</span>
+    `,
+    )
+    .join("");
+}
+
+function renderExpenseList(expenses) {
+  const list = document.getElementById("expenseList");
+  if (!list) return;
+
+  if (!expenses || expenses.length === 0) {
+    list.innerHTML =
+      '<div style="text-align:center; color:#999; padding: 20px 0;">No expenses logged yet</div>';
+    document.getElementById("expenseRunningTotal").textContent =
+      formatCurrency(0);
+    return;
+  }
+
+  list.innerHTML = expenses
+    .map((expense) => {
+      const isOwner = currentUser && expense.created_by === currentUser.id;
+      return `
+        <div style="border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fff;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-weight: 600;">${expense.description}</div>
+            <div style="font-weight: 700; color: #1a5490;">${formatCurrency(expense.amount)}</div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-top: 4px;">
+            <span>${expense.category} • ${formatDateShort(expense.expense_date)}</span>
+            <span>Added by ${expense.created_by_name || "Unknown"}</span>
+          </div>
+          ${expense.notes ? `<div style="margin-top: 6px; font-size: 12px; color: #444;">${expense.notes}</div>` : ""}
+          ${
+            isOwner
+              ? `<div style="text-align: right; margin-top: 8px;">
+                  <button class="btn btn-small btn-danger" onclick="deleteExpense(${expense.id})">Delete</button>
+                </div>`
+              : ""
+          }
+        </div>
+      `;
+    })
+    .join("");
+
+  document.getElementById("expenseRunningTotal").textContent = formatCurrency(
+    expenseSummaryCache?.totalSpent || 0,
+  );
+}
+
+function renderBudgetRequests(requests) {
+  const container = document.getElementById("budgetRequestList");
+  if (!container) return;
+
+  if (!requests || requests.length === 0) {
+    container.innerHTML =
+      '<div style="color:#999; font-size: 12px;">No requests yet.</div>';
+    return;
+  }
+
+  container.innerHTML = requests
+    .map((req) => {
+      const statusClass =
+        req.status === "approved"
+          ? "badge-success"
+          : req.status === "rejected"
+            ? "badge-danger"
+            : "badge-warning";
+      return `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #eee;">
+          <div>
+            <div style="font-size: 13px; font-weight: 600;">${formatCurrency(req.requested_amount)}</div>
+            <div style="font-size: 11px; color:#666;">${formatDateShort(req.created_at)}</div>
+          </div>
+          <span class="badge ${statusClass}">${req.status}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function handleExpenseSubmit(e) {
+  e.preventDefault();
+
+  const description = document.getElementById("expenseDescription").value.trim();
+  const category = document.getElementById("expenseCategory").value;
+  const amount = document.getElementById("expenseAmount").value;
+  const expenseDate = document.getElementById("expenseDate").value;
+  const notes = document.getElementById("expenseNotes").value.trim();
+
+  if (!description || !category || !amount) {
+    showToast("Please fill out all required expense fields", "warning");
+    return;
+  }
+
+  showLoading(true);
+  try {
+    const response = await fetch("/api/expenses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+      },
+      body: JSON.stringify({
+        project_id: currentProjectId,
+        description,
+        category,
+        amount,
+        expense_date: expenseDate,
+        notes: notes || null,
+      }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to log expense");
+    }
+
+    showToast("Expense logged successfully", "success");
+    document.getElementById("expenseForm").reset();
+    setDefaultExpenseDate();
+    await refreshExpenseWorkspace();
+
+    if (payload.alerts?.warn100Triggered) {
+      showToast("Budget exceeded. Consider requesting an extension.", "error");
+    } else if (payload.alerts?.warn75Triggered) {
+      showToast("Budget usage crossed 75%.", "warning");
+    }
+  } catch (error) {
+    console.error("Error logging expense:", error);
+    showToast(error.message || "Failed to log expense", "error");
+  } finally {
+    showLoading(false);
+  }
+}
+
+async function deleteExpense(expenseId) {
+  if (!confirm("Delete this expense entry?")) return;
+
+  showLoading(true);
+  try {
+    const response = await fetch(`/api/expenses/${expenseId}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+      },
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to delete expense");
+    }
+
+    showToast("Expense deleted", "success");
+    await refreshExpenseWorkspace();
+  } catch (error) {
+    console.error("Error deleting expense:", error);
+    showToast(error.message || "Failed to delete expense", "error");
+  } finally {
+    showLoading(false);
+  }
+}
+
+function exportExpensesCsv() {
+  if (!expenseCache || expenseCache.length === 0) {
+    showToast("No expenses to export", "warning");
+    return;
+  }
+
+  const rows = [
+    ["Description", "Category", "Amount", "Date", "Notes", "Added By"],
+  ];
+  expenseCache.forEach((expense) => {
+    rows.push([
+      expense.description,
+      expense.category,
+      expense.amount,
+      expense.expense_date,
+      expense.notes || "",
+      expense.created_by_name || "",
+    ]);
+  });
+
+  const csv = rows
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `expenses_${currentProjectId}_${new Date().toISOString().split("T")[0]}.csv`;
+  a.click();
+}
+
+function setDefaultExpenseDate() {
+  const dateInput = document.getElementById("expenseDate");
+  if (!dateInput) return;
+  if (!dateInput.value) {
+    dateInput.valueAsDate = new Date();
+  }
+}
+
+function openBudgetExtensionModal() {
+  if (budgetRequestCache.some((req) => req.status === "pending")) {
+    showToast("A pending request already exists", "warning");
+    return;
+  }
+  document.getElementById("budgetExtensionForm").reset();
+  openModal("budgetExtensionModal");
+}
+
+async function handleBudgetExtensionSubmit(e) {
+  e.preventDefault();
+  const amount = document.getElementById("budgetExtensionAmount").value;
+  const justification = document
+    .getElementById("budgetExtensionJustification")
+    .value.trim();
+
+  if (!amount || !justification) {
+    showToast("Please provide amount and justification", "warning");
+    return;
+  }
+
+  showLoading(true);
+  try {
+    const response = await fetch("/api/budget-extensions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+      },
+      body: JSON.stringify({
+        project_id: currentProjectId,
+        requested_amount: amount,
+        justification,
+      }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to submit request");
+    }
+
+    showToast("Budget extension request submitted", "success");
+    closeModal("budgetExtensionModal");
+    await refreshExpenseWorkspace();
+  } catch (error) {
+    console.error("Error submitting budget extension:", error);
+    showToast(error.message || "Failed to submit request", "error");
+  } finally {
+    showLoading(false);
   }
 }
 
@@ -801,7 +1215,19 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("projectSearch")
     .addEventListener("keyup", updateProjectSidebar);
 
+  const expenseForm = document.getElementById("expenseForm");
+  if (expenseForm) {
+    expenseForm.addEventListener("submit", handleExpenseSubmit);
+    setDefaultExpenseDate();
+  }
+
+  const budgetExtensionForm = document.getElementById("budgetExtensionForm");
+  if (budgetExtensionForm) {
+    budgetExtensionForm.addEventListener("submit", handleBudgetExtensionSubmit);
+  }
+
   loadProjects();
+  initSSE();
 
   // Add CSS
   const style = document.createElement("style");

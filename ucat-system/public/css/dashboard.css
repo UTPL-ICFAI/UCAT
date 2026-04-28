@@ -641,6 +641,10 @@
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   }
 
+  .pm-comm-grid {
+    grid-template-columns: 1fr !important;
+  }
+
   .top-nav {
     flex-direction: column;
     align-items: flex-start;

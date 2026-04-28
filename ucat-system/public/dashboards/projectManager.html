@@ -53,18 +53,23 @@
           <button class="tab" onclick="switchTab(event, 'documents')">Documents</button>
           <button class="tab" onclick="switchTab(event, 'issues')">Issues</button>
           <button class="tab" onclick="switchTab(event, 'communication')">Communication</button>
+          <button class="tab" onclick="switchTab(event, 'expenses')">Expenses</button>
         </div>
         
         <!-- Overview Tab -->
         <div id="overview" class="tab-content active">
           <div class="grid grid-2">
             <div>
-              <h3>Budget Tracking</h3>
+              <h3>Budget Overview</h3>
               <p>Total Budget: <strong id="totalBudget">₹0</strong></p>
               <p>Spent: <strong id="spentAmount">₹0</strong></p>
               <p>Remaining: <strong id="remainingAmount">₹0</strong></p>
-              <div class="progress-bar">
+              <div class="progress-bar" style="margin-bottom: 10px;">
                 <div class="progress-fill" id="budgetProgress" style="width: 0%;"></div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span class="badge" id="budgetStatusBadge">Healthy</span>
+                <button class="btn btn-secondary btn-small" id="requestBudgetExtensionBtn" onclick="openBudgetExtensionModal()" style="display: none;">Request Budget Extension</button>
               </div>
             </div>
             <div>
@@ -75,8 +80,13 @@
               </div>
             </div>
           </div>
-          <div class="chart-container" style="margin-top: 20px;">
-            <canvas id="pmBudgetChart"></canvas>
+          <div class="grid grid-2" style="margin-top: 20px;">
+            <div class="chart-container">
+              <canvas id="pmBudgetChart"></canvas>
+            </div>
+            <div class="chart-container">
+              <canvas id="pmCategoryChart"></canvas>
+            </div>
           </div>
           <div class="card" style="margin-top: 20px;">
             <div class="card-header">Assigned Team</div>
@@ -217,6 +227,67 @@
             <button class="btn" onclick="sendMessage()" style="height: 60px; align-self: flex-end;">Send</button>
           </div>
         </div>
+
+        <!-- Expenses Tab -->
+        <div id="expenses" class="tab-content">
+          <div class="grid grid-2">
+            <div class="card" style="margin-bottom: 0;">
+              <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Expense Log</span>
+                <button class="btn btn-secondary btn-small" id="exportExpensesCsv" onclick="exportExpensesCsv()">Export CSV</button>
+              </div>
+              <form id="expenseForm" style="padding: 15px 20px 0;">
+                <div class="form-group">
+                  <label>Description *</label>
+                  <input type="text" id="expenseDescription" required placeholder="Concrete purchase" />
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div class="form-group">
+                    <label>Category *</label>
+                    <select id="expenseCategory" required>
+                      <option value="">Select category</option>
+                      <option value="Materials">Materials</option>
+                      <option value="Labour">Labour</option>
+                      <option value="Equipment">Equipment</option>
+                      <option value="Miscellaneous">Miscellaneous</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Amount (₹) *</label>
+                    <input type="number" id="expenseAmount" required min="0" step="0.01" />
+                  </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div class="form-group">
+                    <label>Date *</label>
+                    <input type="date" id="expenseDate" required />
+                  </div>
+                  <div class="form-group">
+                    <label>Notes (optional)</label>
+                    <input type="text" id="expenseNotes" placeholder="Invoice #A12" />
+                  </div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                  <button type="submit" class="btn">Log Expense</button>
+                </div>
+              </form>
+              <div style="padding: 10px 20px;">
+                <div id="expenseCategoryBadges" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+              </div>
+              <div id="expenseList" style="max-height: 260px; overflow-y: auto; padding: 0 20px 10px;"></div>
+              <div style="border-top: 1px solid #eee; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 600;">Total Spend</span>
+                <span id="expenseRunningTotal">₹0</span>
+              </div>
+            </div>
+            <div class="card" style="margin-bottom: 0;">
+              <div class="card-header">Budget Extension Requests</div>
+              <div style="padding: 15px 20px;">
+                <div id="budgetRequestList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -348,6 +419,30 @@
     <div class="loading-content">
       <div class="spinner"></div>
       <p>Loading...</p>
+    </div>
+  </div>
+
+  <!-- Budget Extension Modal -->
+  <div id="budgetExtensionModal" class="modal">
+    <div class="modal-content" style="max-width: 480px;">
+      <div class="modal-header">
+        <span>Request Budget Extension</span>
+        <button class="modal-close" onclick="closeModal('budgetExtensionModal')">&times;</button>
+      </div>
+      <form id="budgetExtensionForm" style="padding: 20px;">
+        <div class="form-group">
+          <label>Additional Amount Needed (₹) *</label>
+          <input type="number" id="budgetExtensionAmount" required min="0" step="0.01" />
+        </div>
+        <div class="form-group">
+          <label>Justification *</label>
+          <textarea id="budgetExtensionJustification" class="form-control" required rows="4" placeholder="Explain why additional budget is required"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="submit" class="btn">Submit Request</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('budgetExtensionModal')">Cancel</button>
+        </div>
+      </form>
     </div>
   </div>
   

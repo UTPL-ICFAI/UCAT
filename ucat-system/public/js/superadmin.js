@@ -84,6 +84,11 @@ function clearCheckboxSelections(containerId) {
   });
 }
 
+function formatCurrency(amount) {
+  const value = Number(amount) || 0;
+  return "₹" + value.toFixed(2);
+}
+
 /**
  * Initialize the application - called on page load
  * Sets up all event listeners, loads data, and prepares UI
@@ -1382,6 +1387,8 @@ function setupNavigation() {
       } else if (sectionName === "documentsSection") {
         // Load documents when documents section is clicked
         loadAllDocuments();
+      } else if (sectionName === "budgetExtensionsSection") {
+        loadBudgetExtensionRequests();
       }
     });
   });
@@ -1477,6 +1484,24 @@ function setupEventListeners() {
     // Filter documents when document type selection changes
     documentTypeFilter.addEventListener("change", filterDocuments);
   }
+  const budgetRequestProjectFilter = document.getElementById(
+    "budgetRequestProjectFilter",
+  );
+  if (budgetRequestProjectFilter) {
+    budgetRequestProjectFilter.addEventListener(
+      "change",
+      loadBudgetExtensionRequests,
+    );
+  }
+  const budgetRequestStatusFilter = document.getElementById(
+    "budgetRequestStatusFilter",
+  );
+  if (budgetRequestStatusFilter) {
+    budgetRequestStatusFilter.addEventListener(
+      "change",
+      loadBudgetExtensionRequests,
+    );
+  }
   // Get all modal close buttons
   const closeButtons = document.querySelectorAll(".close-btn, .close-button");
   // Loop through each close button
@@ -1545,6 +1570,7 @@ function loadProjects() {
       displayOngoingProjects();
       // Display past projects
       displayPastProjects();
+      populateBudgetRequestProjectFilter();
     })
     // Catch and log any errors from the API request
     .catch((error) => {
@@ -2402,6 +2428,143 @@ function downloadDocument(filePath, fileName) {
   document.body.removeChild(link);
   // Show success notification
   showToast("Download started: " + (fileName || "document"), "success");
+}
+
+function populateBudgetRequestProjectFilter() {
+  const filter = document.getElementById("budgetRequestProjectFilter");
+  if (!filter) return;
+
+  while (filter.options.length > 1) {
+    filter.remove(1);
+  }
+
+  allProjects.forEach((project) => {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    filter.appendChild(option);
+  });
+}
+
+function loadBudgetExtensionRequests() {
+  const token = localStorage.getItem("auth_token");
+  const projectFilter = document.getElementById("budgetRequestProjectFilter");
+  const statusFilter = document.getElementById("budgetRequestStatusFilter");
+
+  const projectValue = projectFilter ? projectFilter.value : "";
+  const statusValue = statusFilter ? statusFilter.value : "";
+
+  const params = new URLSearchParams();
+  if (projectValue) params.append("project_id", projectValue);
+  if (statusValue) params.append("status", statusValue);
+
+  const url = `/api/budget-extensions/admin${params.toString() ? "?" + params.toString() : ""}`;
+
+  fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      populateBudgetRequestProjectFilter();
+      displayBudgetExtensionRequests(Array.isArray(data) ? data : []);
+    })
+    .catch((error) => {
+      console.error("Error loading budget requests:", error);
+      showToast("Failed to load budget requests", "error");
+    });
+}
+
+function displayBudgetExtensionRequests(requests) {
+  const tableBody = document.getElementById("budgetRequestsTable");
+  if (!tableBody) return;
+
+  if (!requests || requests.length === 0) {
+    tableBody.innerHTML =
+      '<tr><td colspan="8" style="text-align:center;">No requests found</td></tr>';
+    return;
+  }
+
+  tableBody.innerHTML = requests
+    .map((request) => {
+      const statusClass =
+        request.status === "approved"
+          ? "badge-success"
+          : request.status === "rejected"
+            ? "badge-danger"
+            : "badge-warning";
+      const percentUsed = Number(request.percent_used_before || 0).toFixed(1);
+      const actionButtons =
+        request.status === "pending"
+          ? `<button class="btn btn-small btn-success" onclick="approveBudgetExtension(${request.id})">Approve</button>
+             <button class="btn btn-small btn-danger" onclick="rejectBudgetExtension(${request.id})">Reject</button>`
+          : "-";
+      return `
+        <tr>
+          <td>${request.project_name || "Unknown"}</td>
+          <td>${request.requested_by_name || "Unknown"}</td>
+          <td>${formatCurrency(request.budget_before)}</td>
+          <td>${formatCurrency(request.requested_amount)}</td>
+          <td>${percentUsed}% (${formatCurrency(request.spent_before)})</td>
+          <td><span class="badge ${statusClass}">${request.status}</span></td>
+          <td>${new Date(request.created_at).toLocaleDateString()}</td>
+          <td>${actionButtons}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function approveBudgetExtension(requestId) {
+  if (!confirm("Approve this budget extension request?")) return;
+  const note = prompt("Approval note (optional):", "Approved") || "";
+
+  const token = localStorage.getItem("auth_token");
+  fetch(`/api/budget-extensions/${requestId}/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ review_note: note }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.error) throw new Error(data.error);
+      showToast("Budget extension approved", "success");
+      loadBudgetExtensionRequests();
+      loadProjects();
+    })
+    .catch((error) => {
+      console.error("Approval error:", error);
+      showToast(error.message || "Failed to approve", "error");
+    });
+}
+
+function rejectBudgetExtension(requestId) {
+  if (!confirm("Reject this budget extension request?")) return;
+  const note = prompt("Rejection note (optional):", "Rejected") || "";
+
+  const token = localStorage.getItem("auth_token");
+  fetch(`/api/budget-extensions/${requestId}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ review_note: note }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.error) throw new Error(data.error);
+      showToast("Budget extension rejected", "warning");
+      loadBudgetExtensionRequests();
+    })
+    .catch((error) => {
+      console.error("Rejection error:", error);
+      showToast(error.message || "Failed to reject", "error");
+    });
 }
 
 /**
