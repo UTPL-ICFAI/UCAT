@@ -25,6 +25,27 @@ import expensesRoutes from "./routes/expenses.js";
 import budgetExtensionsRoutes from "./routes/budgetExtensions.js";
 import supervisorGoalsRoutes from "./routes/supervisorGoals.js";
 
+import("./init-db.js"); // optional auto run (or use route below)
+
+app.get("/init-db", async (req, res) => {
+  try {
+    await import("./init-db.js");
+    res.send("DB Initialized ✅");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error initializing DB ❌");
+  }
+});
+
+app.get("/seed", async (req, res) => {
+  try {
+    await import("./seed.js");
+    res.send("Seed Done ✅");
+  } catch (err) {
+    res.status(500).send("Seed Failed ❌");
+  }
+});
+
 dotenv.config();
 
 const app = express();
