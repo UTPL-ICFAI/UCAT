@@ -29,11 +29,18 @@ import("./init-db.js"); // optional auto run (or use route below)
 
 app.get("/init-db", async (req, res) => {
   try {
-    await import("./init-db.js");
+    console.log("Running init-db...");
+
+    const init = await import("./init-db.js");
+
+    if (init.default) {
+      await init.default(); // if exported function
+    }
+
     res.send("DB Initialized ✅");
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Error initializing DB ❌");
+    console.error("INIT DB ERROR ❌", err);
+    res.status(500).send(err.message);
   }
 });
 
