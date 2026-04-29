@@ -5,21 +5,19 @@ dotenv.config();
 
 const { Pool } = pg;
 
-const config = {
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'ucat_db',
-};
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 
-if (process.env.DB_PASSWORD) {
-  config.password = process.env.DB_PASSWORD;
-}
-
-const pool = new Pool(config);
+pool.on('connect', () => {
+  console.log("DB Connected ✅");
+});
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
+  console.error("DB Error ❌", err);
 });
 
 export default pool;
