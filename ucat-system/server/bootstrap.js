@@ -33,11 +33,36 @@ async function ensureSuperadmin(client) {
   }
 
   const hashedPassword = await bcrypt.hash('superadmin', 10);
+  const columnResult = await client.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'users'`,
+  );
+
+  const availableColumns = new Set(columnResult.rows.map((row) => row.column_name));
+  const values = {
+    name: 'Super Admin',
+    username: 'superadmin',
+    age: 45,
+    gender: 'other',
+    employment_id: 'SA001',
+    role: 'superadmin',
+    user_id: 'superadmin',
+    password_hash: hashedPassword,
+    permissions: '{}',
+    created_at: new Date(),
+  };
+
+  const insertColumns = Object.keys(values).filter((column) => availableColumns.has(column));
+  const insertValues = insertColumns.map((column) => values[column]);
+  const placeholders = insertColumns.map((_, index) => `$${index + 1}`);
+
   const createdUser = await client.query(
-    `INSERT INTO users (name, age, gender, employment_id, role, user_id, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO users (${insertColumns.join(', ')})
+     VALUES (${placeholders.join(', ')})
      RETURNING id`,
-    ['Super Admin', 45, 'other', 'SA001', 'superadmin', 'superadmin', hashedPassword],
+    insertValues,
   );
 
   return createdUser.rows[0].id;
@@ -57,6 +82,7 @@ async function ensurePasswordHashColumn(client) {
 }
 
 async function ensureUsersCompatibility(client) {
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20)');
