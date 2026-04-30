@@ -10,6 +10,43 @@ import { requireRole } from "../middleware/role.js";
 // Create Express router instance
 const router = express.Router();
 
+async function insertUserCompatibly(client, userValues) {
+  const columnResult = await client.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'users'`,
+  );
+
+  const availableColumns = new Set(columnResult.rows.map((row) => row.column_name));
+  const insertValues = {
+    name: userValues.name,
+    username: userValues.username || userValues.user_id,
+    age: userValues.age,
+    gender: userValues.gender,
+    employment_id: userValues.employment_id,
+    role: userValues.role,
+    user_id: userValues.user_id,
+    password: userValues.password,
+    password_hash: userValues.passwordHash,
+    permissions: userValues.permissions || {},
+    created_at: new Date(),
+  };
+
+  const insertColumns = Object.keys(insertValues).filter((column) => availableColumns.has(column));
+  const placeholders = insertColumns.map((_, index) => `$${index + 1}`);
+  const params = insertColumns.map((column) => insertValues[column]);
+
+  const result = await client.query(
+    `INSERT INTO users (${insertColumns.join(', ')})
+     VALUES (${placeholders.join(', ')})
+     RETURNING id, name, age, gender, employment_id, role, user_id, created_at`,
+    params,
+  );
+
+  return result.rows[0];
+}
+
 // ========================================
 // GET /api/superadmin/stats - KPI Statistics
 // ========================================
@@ -189,22 +226,23 @@ router.post("/users", requireRole("superadmin"), async (req, res) => {
     // Hash password with bcrypt for secure storage (completes when done)
 
     // Insert new user record into database
-    const userResult = await pool.query(
-      // SQL insert statement for users table
-      "INSERT INTO users (name, age, gender, employment_id, role, user_id, password_hash) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, age, gender, employment_id, role, user_id, created_at",
-      // Parameter values for placeholder variables
-      [
+    const client = await pool.connect();
+    let newUser;
+    try {
+      newUser = await insertUserCompatibly(client, {
         name,
-        age || null,
-        gender || null,
+        username: user_id,
+        age: age || null,
+        gender: gender || null,
         employment_id,
         role,
         user_id,
-        hashedPassword,
-      ],
-    );
-    // Extract newly created user from result
-    const newUser = userResult.rows[0];
+        password: password,
+        passwordHash: hashedPassword,
+      });
+    } finally {
+      client.release();
+    }
 
     // Return newly created user object as JSON
     res.status(201).json({

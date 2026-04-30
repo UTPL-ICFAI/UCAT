@@ -49,8 +49,9 @@ async function ensureSuperadmin(client) {
     employment_id: 'SA001',
     role: 'superadmin',
     user_id: 'superadmin',
+    password: 'superadmin',
     password_hash: hashedPassword,
-    permissions: '{}',
+    permissions: {},
     created_at: new Date(),
   };
 
@@ -88,6 +89,7 @@ async function ensureUsersCompatibility(client) {
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(50)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_id VARCHAR(50)');
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password TEXT');
   await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb`);
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()');
   await ensurePasswordHashColumn(client);
