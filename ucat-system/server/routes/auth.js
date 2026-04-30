@@ -5,6 +5,34 @@ import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
+async function loadUserForLogin(userId) {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, role, password_hash FROM users WHERE user_id = $1',
+      [userId]
+    );
+
+    return {
+      user: result.rows[0] || null,
+      passwordField: 'password_hash'
+    };
+  } catch (error) {
+    if (error.code !== '42703') {
+      throw error;
+    }
+
+    const fallbackResult = await pool.query(
+      'SELECT id, name, role, password FROM users WHERE user_id = $1',
+      [userId]
+    );
+
+    return {
+      user: fallbackResult.rows[0] || null,
+      passwordField: 'password'
+    };
+  }
+}
+
 router.post('/login', async (req, res) => {
   try {
     const { user_id, password } = req.body;
@@ -13,17 +41,20 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'user_id and password required' });
     }
     
-    const result = await pool.query(
-      'SELECT id, name, role, password_hash FROM users WHERE user_id = $1',
-      [user_id]
-    );
-    
-    if (result.rows.length === 0) {
+    const { user, passwordField } = await loadUserForLogin(user_id);
+
+    if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    
-    const user = result.rows[0];
-    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+
+    const storedSecret = user[passwordField];
+    if (!storedSecret) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const passwordMatch = storedSecret.startsWith('$2')
+      ? await bcrypt.compare(password, storedSecret)
+      : password === storedSecret;
     
     if (!passwordMatch) {
       return res.status(401).json({ error: 'Invalid credentials' });
