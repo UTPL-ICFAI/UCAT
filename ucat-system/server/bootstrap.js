@@ -57,6 +57,8 @@ async function ensurePasswordHashColumn(client) {
 }
 
 async function ensureUsersCompatibility(client) {
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER');
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(50)');
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_id VARCHAR(50)');
