@@ -3,6 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import { verifyToken } from "./middleware/auth.js";
+import { bootstrapDatabase } from "./bootstrap.js";
 
 // Import routes
 import authRoutes from "./routes/auth.js";
@@ -84,9 +85,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(PORT, () => {
-  console.log(
-    `UCAT Construction Tracker Server running on http://localhost:${PORT}`,
-  );
-  console.log("API endpoints available at http://localhost:" + PORT + "/api");
-});
+async function startServer() {
+  try {
+    await bootstrapDatabase();
+
+    app.listen(PORT, () => {
+      console.log(
+        `UCAT Construction Tracker Server running on http://localhost:${PORT}`,
+      );
+      console.log("API endpoints available at http://localhost:" + PORT + "/api");
+    });
+  } catch (error) {
+    console.error("Failed to bootstrap database:", error);
+    process.exit(1);
+  }
+}
+
+startServer();
