@@ -19,7 +19,7 @@ function buildBootstrapSchema() {
   return schema
     .replace(/^DROP TABLE IF EXISTS .*$/gm, '')
     .replace(/CREATE TABLE\s+/g, 'CREATE TABLE IF NOT EXISTS ')
-    .replace(/CREATE INDEX\s+/g, 'CREATE INDEX IF NOT EXISTS ');
+    .replace(/^CREATE INDEX .*$/gm, '');
 }
 
 async function ensureSuperadmin(client) {
@@ -53,6 +53,50 @@ async function ensurePasswordHashColumn(client) {
 
   if (columnResult.rows.length === 0) {
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT');
+  }
+}
+
+async function ensureUsersCompatibility(client) {
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20)');
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(50)');
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_id VARCHAR(50)');
+  await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb`);
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()');
+  await ensurePasswordHashColumn(client);
+}
+
+async function ensureTemplatesCompatibility(client) {
+  await client.query('ALTER TABLE templates ADD COLUMN IF NOT EXISTS user_id INTEGER');
+  await client.query('ALTER TABLE templates ADD COLUMN IF NOT EXISTS description TEXT');
+  await client.query(`ALTER TABLE templates ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await client.query(`ALTER TABLE templates ADD COLUMN IF NOT EXISTS rows JSONB DEFAULT '[]'::jsonb`);
+  await client.query('ALTER TABLE templates ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false');
+  await client.query('ALTER TABLE templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true');
+}
+
+async function ensureUserIndexes(client) {
+  const usersRoleColumn = await client.query(
+    `SELECT 1
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'users'
+       AND column_name = 'role'`,
+  );
+
+  const usersUserIdColumn = await client.query(
+    `SELECT 1
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'users'
+       AND column_name = 'user_id'`,
+  );
+
+  if (usersRoleColumn.rows.length > 0) {
+    await client.query('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+  }
+
+  if (usersUserIdColumn.rows.length > 0) {
+    await client.query('CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)');
   }
 }
 
@@ -95,10 +139,13 @@ export async function bootstrapDatabase() {
   try {
     await client.query('BEGIN');
     await client.query(buildBootstrapSchema());
-    await ensurePasswordHashColumn(client);
+    await ensureUsersCompatibility(client);
+    await ensureTemplatesCompatibility(client);
 
     const superadminId = await ensureSuperadmin(client);
     await ensureDefaultTemplates(client, superadminId);
+
+    await ensureUserIndexes(client);
 
     await client.query('COMMIT');
   } catch (error) {
