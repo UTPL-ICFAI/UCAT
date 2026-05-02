@@ -29,8 +29,8 @@ async function getProjectBudget(projectId) {
     [projectId],
   );
   return {
-    total_budget: parseFloat(projectResult.rows[0]?.total_budget || 0),
-    budget_allocated: parseFloat(projectResult.rows[0]?.budget_allocated || 0),
+    total_budget: Number(projectResult.rows[0]?.total_budget) || 0,
+    budget_allocated: Number(projectResult.rows[0]?.budget_allocated) || 0,
   };
 }
 
@@ -40,7 +40,7 @@ async function getProjectSpent(projectId) {
     `SELECT COALESCE(SUM(amount), 0) AS total_spent FROM ${expenseConfig.table} WHERE project_id = $1`,
     [projectId],
   );
-  return parseFloat(spentResult.rows[0]?.total_spent || 0);
+  return Number(spentResult.rows[0]?.total_spent) || 0;
 }
 
 router.get("/my", requireRole("project_manager"), async (req, res) => {
@@ -104,22 +104,20 @@ router.post("/", requireRole("project_manager"), async (req, res) => {
     }
 
     const projectBudget = await getProjectBudget(projectId);
-    const totalBudget = projectBudget.total_budget;
-    const budgetAllocated = projectBudget.budget_allocated;
+    const totalBudget = Number(projectBudget.total_budget) || 0;
+    const budgetAllocated = Number(projectBudget.budget_allocated) || 0;
     const totalSpent = await getProjectSpent(projectId);
-    const requestedAmountValue = Number(amountRequested);
-    const remainingAllocated = budgetAllocated - totalSpent;
-    const usagePercentage = budgetAllocated ? totalSpent / budgetAllocated : 0;
-    const surplusAmount = totalBudget - budgetAllocated;
+    const requestedAmountValue = Number(amountRequested) || 0;
+    const surplusAmount = Math.max(0, totalBudget - budgetAllocated);
     const fundingType =
       surplusAmount > 0 && requestedAmountValue <= surplusAmount
         ? "INTERNAL_REALLOCATION"
         : "NEW_BUDGET_EXPANSION";
 
-    if (usagePercentage < 0.8 && requestedAmountValue <= remainingAllocated) {
+    if (surplusAmount > 0 && requestedAmountValue > surplusAmount) {
       return res.status(400).json({
-        error:
-          "You can request budget only after 80% of allocated budget is used, unless the request exceeds remaining allocated budget",
+        max_allowed: surplusAmount,
+        error: "Request exceeds available project funds",
       });
     }
 
@@ -145,7 +143,7 @@ router.post("/", requireRole("project_manager"), async (req, res) => {
         justification,
         totalBudget,
         totalSpent,
-        usagePercentage * 100,
+        totalBudget ? (totalSpent / totalBudget) * 100 : 0,
       ],
     );
 
@@ -244,65 +242,65 @@ router.patch("/:requestId", requireRole("superadmin"), async (req, res) => {
         return res.status(404).json({ error: "Project not found" });
       }
 
-      const totalBudget = parseFloat(projectResult.rows[0]?.total_budget || 0);
-      const budgetAllocated = parseFloat(
-        projectResult.rows[0]?.budget_allocated || 0,
-      );
-      const surplusAmount = totalBudget - budgetAllocated;
-      fundingType =
-        surplusAmount > 0 && Number(amountRequested) <= surplusAmount
-          ? "INTERNAL_REALLOCATION"
-          : "NEW_BUDGET_EXPANSION";
-
-      if (fundingType === "INTERNAL_REALLOCATION") {
-        if (Number(amountRequested) > surplusAmount) {
+      const totalBudget = Number(projectResult.rows[0]?.total_budget) || 0;
+      const budgetAllocated = Number(projectResult.rows[0]?.budget_allocated) || 0;
+      const approvedAmount = Number(amountRequested) || 0;
+      const surplusAmount = Math.max(0, totalBudget - budgetAllocated);
+      console.log({ total: totalBudget, allocated: budgetAllocated, surplus: surplusAmount, approved_amount: approvedAmount });
+      if (surplusAmount > 0) {
+        if (approvedAmount > surplusAmount) {
           await client.query("ROLLBACK");
           return res.status(400).json({
             max_allowed: surplusAmount,
-            error: `You can request up to ${surplusAmount} from available project funds`,
+            error: "Approval exceeds available surplus",
           });
         }
+
+        fundingType = "INTERNAL_REALLOCATION";
 
         const budgetResult = await client.query(
           `UPDATE projects
              SET budget_allocated = COALESCE(budget_allocated, 0) + $1
              WHERE id = $2
              RETURNING total_budget, budget_allocated`,
-          [amountRequested, request.project_id],
+          [approvedAmount, request.project_id],
         );
-        updatedBudget = parseFloat(
-          budgetResult.rows[0]?.budget_allocated || budgetAllocated,
-        );
+        const updatedTotal = Number(budgetResult.rows[0]?.total_budget) || totalBudget;
+        const updatedAllocated = Number(budgetResult.rows[0]?.budget_allocated) || (budgetAllocated + approvedAmount);
+        if (updatedAllocated > updatedTotal) {
+          await client.query("ROLLBACK");
+          throw new Error("CRITICAL: allocated cannot exceed total");
+        }
+        updatedBudget = updatedAllocated;
       } else {
+        fundingType = "NEW_BUDGET_EXPANSION";
         const budgetResult = await client.query(
           `UPDATE projects
              SET total_budget = COALESCE(total_budget, 0) + $1,
                  budget_allocated = COALESCE(budget_allocated, 0) + $1
              WHERE id = $2
              RETURNING total_budget, budget_allocated`,
-          [amountRequested, request.project_id],
+          [approvedAmount, request.project_id],
         );
-        updatedBudget = parseFloat(
-          budgetResult.rows[0]?.budget_allocated || budgetAllocated,
-        );
+        const updatedTotal = Number(budgetResult.rows[0]?.total_budget) || (totalBudget + approvedAmount);
+        const updatedAllocated = Number(budgetResult.rows[0]?.budget_allocated) || (budgetAllocated + approvedAmount);
+        if (updatedAllocated > updatedTotal) {
+          await client.query("ROLLBACK");
+          throw new Error("CRITICAL: allocated cannot exceed total");
+        }
+        updatedBudget = updatedAllocated;
       }
 
       const finalBudgetCheck = await client.query(
         "SELECT total_budget, budget_allocated FROM projects WHERE id = $1 FOR UPDATE",
         [request.project_id],
       );
-      const finalTotalBudget = parseFloat(
-        finalBudgetCheck.rows[0]?.total_budget || 0,
-      );
-      const finalAllocatedBudget = parseFloat(
-        finalBudgetCheck.rows[0]?.budget_allocated || 0,
-      );
+      const finalTotalBudget = Number(finalBudgetCheck.rows[0]?.total_budget) || 0;
+      const finalAllocatedBudget = Number(finalBudgetCheck.rows[0]?.budget_allocated) || 0;
 
       if (finalAllocatedBudget > finalTotalBudget) {
         await client.query("ROLLBACK");
-        return res.status(400).json({
-          error: "Budget allocation cannot exceed total budget",
-        });
+        throw new Error("CRITICAL: allocated cannot exceed total");
       }
     }
 
