@@ -28,11 +28,10 @@ async function getProjectBudget(projectId) {
     "SELECT total_budget, budget_allocated FROM projects WHERE id = $1",
     [projectId],
   );
-  return parseFloat(
-    projectResult.rows[0]?.total_budget ||
-      projectResult.rows[0]?.budget_allocated ||
-      0,
-  );
+  return {
+    total_budget: parseFloat(projectResult.rows[0]?.total_budget || 0),
+    budget_allocated: parseFloat(projectResult.rows[0]?.budget_allocated || 0),
+  };
 }
 
 async function getProjectSpent(projectId) {
@@ -104,9 +103,25 @@ router.post("/", requireRole("project_manager"), async (req, res) => {
         .json({ error: "A pending request already exists for this project" });
     }
 
-    const totalBudget = await getProjectBudget(projectId);
+    const projectBudget = await getProjectBudget(projectId);
+    const totalBudget = projectBudget.total_budget;
+    const budgetAllocated = projectBudget.budget_allocated;
     const totalSpent = await getProjectSpent(projectId);
-    const percentUsed = totalBudget ? (totalSpent / totalBudget) * 100 : 0;
+    const requestedAmountValue = Number(amountRequested);
+    const remainingAllocated = budgetAllocated - totalSpent;
+    const usagePercentage = budgetAllocated ? totalSpent / budgetAllocated : 0;
+    const surplusAmount = totalBudget - budgetAllocated;
+    const fundingType =
+      surplusAmount > 0 && requestedAmountValue <= surplusAmount
+        ? "INTERNAL_REALLOCATION"
+        : "NEW_BUDGET_EXPANSION";
+
+    if (usagePercentage < 0.8 && requestedAmountValue <= remainingAllocated) {
+      return res.status(400).json({
+        error:
+          "You can request budget only after 80% of allocated budget is used, unless the request exceeds remaining allocated budget",
+      });
+    }
 
     const result = await pool.query(
       `INSERT INTO budget_extension_requests (
@@ -125,16 +140,19 @@ router.post("/", requireRole("project_manager"), async (req, res) => {
       [
         projectId,
         req.user.id,
-        amountRequested,
-        amountRequested,
+        requestedAmountValue,
+        requestedAmountValue,
         justification,
         totalBudget,
         totalSpent,
-        percentUsed,
+        usagePercentage * 100,
       ],
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({
+      ...result.rows[0],
+      funding_type: fundingType,
+    });
   } catch (error) {
     console.error("Error creating budget extension request:", error);
     res.status(500).json({ error: "Failed to create request" });
@@ -213,16 +231,54 @@ router.patch("/:requestId", requireRole("superadmin"), async (req, res) => {
     let updatedBudget = null;
     const amountRequested =
       request.amount_requested ?? request.requested_amount ?? 0;
+    let fundingType = null;
 
     if (status === "approved") {
-      const budgetResult = await client.query(
-        `UPDATE projects
-           SET total_budget = COALESCE(total_budget, 0) + $1
-           WHERE id = $2
-           RETURNING total_budget`,
-        [amountRequested, request.project_id],
+      const projectResult = await client.query(
+        "SELECT total_budget, budget_allocated FROM projects WHERE id = $1 FOR UPDATE",
+        [request.project_id],
       );
-      updatedBudget = parseFloat(budgetResult.rows[0]?.total_budget || 0);
+
+      if (projectResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      const totalBudget = parseFloat(projectResult.rows[0]?.total_budget || 0);
+      const budgetAllocated = parseFloat(
+        projectResult.rows[0]?.budget_allocated || 0,
+      );
+      const surplusAmount = totalBudget - budgetAllocated;
+      fundingType =
+        surplusAmount > 0 && Number(amountRequested) <= surplusAmount
+          ? "INTERNAL_REALLOCATION"
+          : "NEW_BUDGET_EXPANSION";
+
+      if (fundingType === "INTERNAL_REALLOCATION") {
+        fundingType = "INTERNAL_REALLOCATION";
+        const budgetResult = await client.query(
+          `UPDATE projects
+             SET budget_allocated = COALESCE(budget_allocated, 0) + $1
+             WHERE id = $2
+             RETURNING total_budget, budget_allocated`,
+          [amountRequested, request.project_id],
+        );
+        updatedBudget = parseFloat(
+          budgetResult.rows[0]?.budget_allocated || budgetAllocated,
+        );
+      } else {
+        const budgetResult = await client.query(
+          `UPDATE projects
+             SET total_budget = COALESCE(total_budget, 0) + $1,
+                 budget_allocated = COALESCE(budget_allocated, 0) + $1
+             WHERE id = $2
+             RETURNING total_budget, budget_allocated`,
+          [amountRequested, request.project_id],
+        );
+        updatedBudget = parseFloat(
+          budgetResult.rows[0]?.budget_allocated || budgetAllocated,
+        );
+      }
     }
 
     const updateResult = await client.query(
@@ -241,7 +297,8 @@ router.patch("/:requestId", requireRole("superadmin"), async (req, res) => {
         data: {
           project_id: request.project_id,
           amount_requested: amountRequested,
-          total_budget: updatedBudget,
+          allocated_budget: updatedBudget,
+          funding_type: fundingType,
         },
       });
     } else {

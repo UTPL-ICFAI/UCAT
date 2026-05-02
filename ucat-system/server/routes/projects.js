@@ -192,6 +192,7 @@ router.get("/:id", async (req, res) => {
 
     res.json({
       ...project,
+      allocated_budget: project.budget_allocated,
       assignments: assignmentsResult.rows,
     });
   } catch (error) {
@@ -264,11 +265,11 @@ router.get(
         "SELECT total_budget, budget_allocated FROM projects WHERE id = $1",
         [id],
       );
-      const totalBudget = parseFloat(
-        projectResult.rows[0]?.total_budget ||
-          projectResult.rows[0]?.budget_allocated ||
-          0,
+      const totalBudget = parseFloat(projectResult.rows[0]?.total_budget || 0);
+      const allocatedBudget = parseFloat(
+        projectResult.rows[0]?.budget_allocated || 0,
       );
+      const surplusAmount = totalBudget - allocatedBudget;
 
       const expenseConfig = await getExpenseTableConfig();
       const spentResult = await pool.query(
@@ -298,7 +299,11 @@ router.get(
       );
 
       res.json({
-        summary: { totalBudget, totalSpent, remaining, percentUsed },
+        summary: {
+          allocated_budget: allocatedBudget,
+          total_budget: totalBudget,
+          surplus_amount: surplusAmount,
+        },
         byCategory: categoryResult.rows,
         byPeriod: periodResult.rows,
       });

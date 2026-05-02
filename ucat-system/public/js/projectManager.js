@@ -158,10 +158,13 @@ function initSSE() {
 
   sseConnection.addEventListener("budget-extension-approved", (event) => {
     const payload = JSON.parse(event.data || "{}");
-    const budgetText = payload.total_budget
-      ? ` New budget: ${formatCurrency(payload.total_budget)}.`
+    const budgetText = payload.allocated_budget
+      ? ` Allocated budget: ${formatCurrency(payload.allocated_budget)}.`
       : "";
-    showToast(`Budget extension approved.${budgetText}`, "success");
+    const fundingText = payload.funding_type
+      ? ` Funding type: ${payload.funding_type.replace(/_/g, " ").toLowerCase()}.`
+      : "";
+    showToast(`Budget extension approved.${budgetText}${fundingText}`, "success");
     refreshExpenseWorkspace();
   });
 
@@ -259,7 +262,7 @@ async function selectProject(projectId) {
   document.getElementById("pageTitle").textContent = project.name;
 
   // Show project info
-  const projectBudget = project.total_budget ?? project.budget_allocated ?? 0;
+  const projectBudget = project.allocated_budget || 0;
   const info = `
     <p><strong>Location:</strong> ${project.location}</p>
     <p><strong>City:</strong> ${project.city}</p>
@@ -558,11 +561,21 @@ async function refreshExpenseWorkspace() {
     ]);
 
     expenseCache = Array.isArray(expenses) ? expenses : [];
-    expenseSummaryCache = summaryPayload?.summary || {
-      totalBudget: 0,
-      totalSpent: 0,
-      remaining: 0,
-      percentUsed: 0,
+    const summaryData = summaryPayload?.summary || {};
+    const totalSpent = expenseCache.reduce(
+      (sum, expense) => sum + (Number(expense.amount) || 0),
+      0,
+    );
+    const allocatedBudget = Number(summaryData.allocated_budget || 0);
+    const totalBudget = Number(summaryData.total_budget || 0);
+    const surplusAmount = Number(summaryData.surplus_amount || 0);
+    expenseSummaryCache = {
+      allocatedBudget,
+      totalBudget,
+      surplusAmount,
+      totalSpent,
+      remaining: allocatedBudget - totalSpent,
+      percentUsed: allocatedBudget ? totalSpent / allocatedBudget : 0,
     };
     budgetRequestCache = Array.isArray(requests) ? requests : [];
 
@@ -578,9 +591,9 @@ async function refreshExpenseWorkspace() {
 }
 
 function renderBudgetOverview(summary) {
-  const total = summary.totalBudget || 0;
+  const total = summary.allocatedBudget || 0;
   const spent = summary.totalSpent || 0;
-  const remaining = total - spent;
+  const remaining = summary.remaining ?? total - spent;
   const percentUsed = summary.percentUsed || 0;
 
   document.getElementById("totalBudget").textContent = formatCurrency(total);
@@ -610,14 +623,21 @@ function renderBudgetOverview(summary) {
     (request) => request.status === "pending",
   );
 
-  if (percentUsed >= BUDGET_CRITICAL_THRESHOLD) {
-    requestBtn.style.display = "inline-block";
-    requestBtn.disabled = hasPending;
-    requestBtn.textContent = hasPending
-      ? "Extension Request Pending"
-      : "Request Budget Extension";
+  requestBtn.style.display = percentUsed >= 0.8 ? "inline-block" : "none";
+  requestBtn.disabled = false;
+  requestBtn.textContent = hasPending
+    ? "Extension Request Pending"
+    : "Request Budget Extension";
+  if (percentUsed >= 0.8) {
+    requestBtn.style.background = "#ff9800";
+    requestBtn.style.color = "#fff";
+    requestBtn.style.fontWeight = "700";
+    requestBtn.style.boxShadow = "0 0 0 3px rgba(255, 152, 0, 0.18)";
   } else {
-    requestBtn.style.display = "none";
+    requestBtn.style.background = "";
+    requestBtn.style.color = "";
+    requestBtn.style.fontWeight = "";
+    requestBtn.style.boxShadow = "";
   }
 
   updateExpenseFormState({ total, remaining, percentUsed });
@@ -829,7 +849,7 @@ async function handleExpenseSubmit(e) {
   }
 
   if (
-    expenseSummaryCache?.totalBudget > 0 &&
+    expenseSummaryCache?.allocatedBudget > 0 &&
     expenseSummaryCache?.remaining <= 0
   ) {
     showToast(
@@ -992,6 +1012,11 @@ async function handleBudgetExtensionSubmit(e) {
       throw new Error(payload.error || "Failed to submit request");
     }
 
+    if (payload.funding_type === "INTERNAL_REALLOCATION") {
+      showToast("Requesting from available project funds", "info");
+    } else {
+      showToast("Requesting new budget approval", "info");
+    }
     showToast("Budget extension request submitted", "success");
     closeModal("budgetExtensionModal");
     await refreshExpenseWorkspace();
