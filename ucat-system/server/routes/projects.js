@@ -390,4 +390,36 @@ router.put("/:id", requireRole("superadmin"), async (req, res) => {
   }
 });
 
+// Delete project (superadmin only)
+router.delete("/:id", requireRole("superadmin"), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+
+    await client.query("BEGIN");
+
+    const projectResult = await client.query(
+      "SELECT id FROM projects WHERE id = $1 FOR UPDATE",
+      [id],
+    );
+
+    if (projectResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    await client.query("DELETE FROM attendance WHERE project_id = $1", [id]);
+    await client.query("DELETE FROM projects WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Delete project error:", error);
+    res.status(500).json({ error: "Failed to delete project" });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;

@@ -595,6 +595,35 @@ function deleteUser(userId) {
     });
 }
 
+function deleteProject(projectId) {
+  if (!confirm("This action cannot be undone")) {
+    return;
+  }
+
+  const token = localStorage.getItem("auth_token");
+  fetch(`/api/projects/${projectId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error("Failed to delete project");
+      }
+      return response.json();
+    })
+    .then(() => {
+      showToast("Project deleted successfully", "success");
+      loadProjects();
+      loadStats();
+    })
+    .catch((error) => {
+      console.error("Error deleting project:", error);
+      showToast("Error deleting project", "error");
+    });
+}
+
 /**
  * Load the permissions matrix from API and display in permissions section
  * Makes GET request to /api/superadmin/permissions/all
@@ -1659,6 +1688,7 @@ function displayOngoingProjects() {
         <button class="btn-view-details" onclick="viewProjectDetails(${project.id})">View Details</button>
         <button class="btn-view-details" onclick="openAssignTemplatesModal(${project.id}, '${(project.name || "").replace(/'/g, "\\'")}')">Assign Templates</button>
         <button class="btn-view-details" onclick="exportProjectWorkbook(${project.id})">Download Excel</button>
+        <button class="btn-view-details" onclick="deleteProject(${project.id})">Delete Project</button>
       </div>
     `;
     // Append the project card to the container
@@ -1738,6 +1768,7 @@ function displayPastProjects() {
         <button class="btn-view-details" onclick="viewProjectDetails(${project.id})">View Details</button>
         <button class="btn-view-details" onclick="openAssignTemplatesModal(${project.id}, '${(project.name || "").replace(/'/g, "\\'")}')">Assign Templates</button>
         <button class="btn-view-details" onclick="exportProjectWorkbook(${project.id})">Download Excel</button>
+        <button class="btn-view-details" onclick="deleteProject(${project.id})">Delete Project</button>
       </div>
     `;
     // Append the project card to the container

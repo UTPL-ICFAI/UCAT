@@ -255,7 +255,14 @@ router.patch("/:requestId", requireRole("superadmin"), async (req, res) => {
           : "NEW_BUDGET_EXPANSION";
 
       if (fundingType === "INTERNAL_REALLOCATION") {
-        fundingType = "INTERNAL_REALLOCATION";
+        if (Number(amountRequested) > surplusAmount) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            max_allowed: surplusAmount,
+            error: `You can request up to ${surplusAmount} from available project funds`,
+          });
+        }
+
         const budgetResult = await client.query(
           `UPDATE projects
              SET budget_allocated = COALESCE(budget_allocated, 0) + $1
@@ -278,6 +285,24 @@ router.patch("/:requestId", requireRole("superadmin"), async (req, res) => {
         updatedBudget = parseFloat(
           budgetResult.rows[0]?.budget_allocated || budgetAllocated,
         );
+      }
+
+      const finalBudgetCheck = await client.query(
+        "SELECT total_budget, budget_allocated FROM projects WHERE id = $1 FOR UPDATE",
+        [request.project_id],
+      );
+      const finalTotalBudget = parseFloat(
+        finalBudgetCheck.rows[0]?.total_budget || 0,
+      );
+      const finalAllocatedBudget = parseFloat(
+        finalBudgetCheck.rows[0]?.budget_allocated || 0,
+      );
+
+      if (finalAllocatedBudget > finalTotalBudget) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "Budget allocation cannot exceed total budget",
+        });
       }
     }
 
