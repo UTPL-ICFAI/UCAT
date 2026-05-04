@@ -266,7 +266,7 @@ async function selectProject(projectId) {
   const info = `
     <p><strong>Location:</strong> ${project.location}</p>
     <p><strong>City:</strong> ${project.city}</p>
-    <p><strong>Budget:</strong> ₹${parseFloat(projectBudget || 0).toLocaleString()}</p>
+    <p><strong>Project value:</strong> ₹${parseFloat(projectBudget || 0).toLocaleString()}</p>
     <p><strong>Status:</strong> <span class="badge badge-${project.work_status === "active" ? "success" : "secondary"}">${project.work_status}</span></p>
     <p><strong>Created:</strong> ${formatDate(project.created_at)}</p>
   `;
