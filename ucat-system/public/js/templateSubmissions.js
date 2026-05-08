@@ -59,6 +59,22 @@ function normalizeTemplate(template) {
 function normalizeTableColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
 
+  const normalizeInputType = (columnName, value, fixedValue) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "distance") return "distance";
+
+    const fixedUnit = String(fixedValue || "").trim().toLowerCase();
+    if (
+      !normalized &&
+      (fixedUnit === "meter" || fixedUnit === "kilometer") &&
+      /distance|dist|length|meter|kilometer|km/i.test(columnName)
+    ) {
+      return "distance";
+    }
+
+    return "text";
+  };
+
   return columnsInput
     .map((column, index) => {
       if (typeof column === "string") {
@@ -67,9 +83,18 @@ function normalizeTableColumns(columnsInput) {
         return {
           id: `column_${Date.now()}_${index}`,
           name,
+          inputType: "text",
           isLocked: false,
           fixedValue: "",
           rowFixedValues: {},
+          distanceUnit: "meter",
+          unitLocked: false,
+          showCost: false,
+          costConfigId: null,
+          costConfigName: "",
+          costPerMeter: 0,
+          costPerKilometer: 0,
+          costCurrency: "INR",
           formulaType: null,
           role: null,
         };
@@ -80,24 +105,419 @@ function normalizeTableColumns(columnsInput) {
       if (!name) return null;
 
       const fVal = column.fixedValue;
+      const inputType = normalizeInputType(
+        name,
+        column.inputType || column.fieldType || column.columnType,
+        fVal,
+      );
+      const distanceUnit = String(
+        column.distanceUnit || column.unit || fVal || "meter",
+      )
+        .trim()
+        .toLowerCase();
+      const normalizedDistanceUnit =
+        distanceUnit === "kilometer" ? "kilometer" : "meter";
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
-        isLocked: !!column.isLocked,
+        inputType,
+        isLocked: !!column.isLocked && inputType !== "distance",
         fixedValue:
-          fVal === undefined || fVal === null || fVal === "null"
+          inputType === "distance" || fVal === undefined || fVal === null || fVal === "null"
             ? ""
             : String(fVal),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        distanceUnit: normalizedDistanceUnit,
+        unitLocked:
+          column.unitLocked === true ||
+          column.unit_locked === true ||
+          (inputType === "distance" &&
+            String(column.fixedValue || "").trim().toLowerCase() ===
+              normalizedDistanceUnit),
+        showCost: column.showCost === true || column.show_cost === true,
+        costConfigId: column.costConfigId ?? column.cost_config_id ?? null,
+        costConfigName: column.costConfigName ?? column.cost_config_name ?? "",
+        costPerMeter: Number(column.costPerMeter ?? column.cost_per_meter) || 0,
+        costPerKilometer: Number(column.costPerKilometer ?? column.cost_per_kilometer) || 0,
+        costCurrency: column.costCurrency ?? column.cost_currency ?? "INR",
         formulaType: column.formulaType || column.formula_type || null,
         role: column.role || column.columnRole || null,
       };
     })
     .filter(Boolean);
 }
+
+function getActiveCostRates() {
+  if (window.activeCostRates) {
+    return {
+      cost_per_meter: Number(window.activeCostRates.cost_per_meter) || 0,
+      cost_per_kilometer: Number(window.activeCostRates.cost_per_kilometer) || 0,
+    };
+  }
+
+  return { cost_per_meter: 0, cost_per_kilometer: 0 };
+}
+
+function normalizeRateBundle(rates) {
+  if (!rates || typeof rates !== "object") return getActiveCostRates();
+  return {
+    cost_per_meter: Number(rates.cost_per_meter) || 0,
+    cost_per_kilometer: Number(rates.cost_per_kilometer) || 0,
+  };
+}
+
+function calculateDistanceCost(distance, unit, ratesInput) {
+  const rates = normalizeRateBundle(ratesInput);
+  const numericDistance = Number(distance);
+  if (!Number.isFinite(numericDistance) || numericDistance <= 0) {
+    return 0;
+  }
+
+  const normalizedUnit = String(unit || "").trim().toLowerCase();
+  const rate =
+    normalizedUnit === "kilometer"
+      ? rates.cost_per_kilometer
+      : normalizedUnit === "meter"
+        ? rates.cost_per_meter
+        : 0;
+
+  return numericDistance * (Number(rate) || 0);
+}
+
+function getDistanceRateBundle(source = {}) {
+  return {
+    cost_per_meter: Number(source.costPerMeter ?? source.cost_per_meter) || 0,
+    cost_per_kilometer: Number(source.costPerKilometer ?? source.cost_per_kilometer) || 0,
+    cost_currency: source.costCurrency ?? source.cost_currency ?? "INR",
+    cost_config_id: source.costConfigId ?? source.cost_config_id ?? null,
+    cost_config_name: source.costConfigName ?? source.cost_config_name ?? "",
+  };
+}
+
+function normalizeCostConfigName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function getActiveCostConfigList() {
+  const source = typeof window !== "undefined" ? window.activeCostRates : null;
+  const configs = Array.isArray(source?.configs) ? source.configs : [];
+  return configs.map((config) => ({
+    ...config,
+    normalized_name: normalizeCostConfigName(config.name),
+    cost_per_meter: Number(config.cost_per_meter) || 0,
+    cost_per_kilometer: Number(config.cost_per_kilometer) || 0,
+    currency: config.currency || "INR",
+  }));
+}
+
+function findMatchingCostConfig(workValue) {
+  const normalizedWork = normalizeCostConfigName(workValue);
+  if (!normalizedWork) return null;
+
+  const configs = getActiveCostConfigList();
+  return (
+    configs.find(
+      (config) =>
+        config.normalized_name === normalizedWork ||
+        normalizeCostConfigName(config.name) === normalizedWork,
+    ) || null
+  );
+}
+
+function formatCurrencyValue(amount) {
+  return `₹${(Number(amount) || 0).toFixed(2)}`;
+}
+
+function getTableWorkValue(row, columns) {
+  const preferred = (Array.isArray(columns) ? columns : [])
+    .filter((column) => String(column.inputType || "text").toLowerCase() !== "distance")
+    .map((column) => column.name)
+    .filter(Boolean);
+
+  const prioritized = preferred.filter((columnName) => /work|material|item|name|description|task/i.test(columnName));
+  const candidateColumns = [...prioritized, ...preferred].filter(
+    (columnName, index, array) => array.indexOf(columnName) === index,
+  );
+
+  for (const columnName of candidateColumns) {
+    const value = row[columnName];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return "";
+}
+
+function getTableDistanceValue(row, columns) {
+  const distanceColumn = (Array.isArray(columns) ? columns : []).find(
+    (column) => String(column.inputType || "text").toLowerCase() === "distance",
+  );
+
+  if (distanceColumn) {
+    const cellValue = row[distanceColumn.name];
+    if (cellValue && typeof cellValue === "object") {
+      const distanceValue = Number(cellValue.distance ?? cellValue.value);
+      return {
+        distance: Number.isFinite(distanceValue) ? Math.max(0, distanceValue) : 0,
+        unit:
+          String(cellValue.unit || cellValue.distance_unit || distanceColumn.distanceUnit || "meter")
+            .trim()
+            .toLowerCase() === "kilometer"
+            ? "kilometer"
+            : "meter",
+        columnName: distanceColumn.name,
+      };
+    }
+
+    const numericDistance = Number(cellValue);
+    return {
+      distance: Number.isFinite(numericDistance) ? Math.max(0, numericDistance) : 0,
+      unit:
+        String(distanceColumn.distanceUnit || "meter").trim().toLowerCase() === "kilometer"
+          ? "kilometer"
+          : "meter",
+      columnName: distanceColumn.name,
+    };
+  }
+
+  for (const [key, value] of Object.entries(row || {})) {
+    if (!/distance|dist|length/i.test(String(key || ""))) continue;
+    const numericDistance = Number(value);
+    if (Number.isFinite(numericDistance)) {
+      return {
+        distance: Math.max(0, numericDistance),
+        unit: "meter",
+        columnName: key,
+      };
+    }
+  }
+
+  return { distance: 0, unit: "meter", columnName: null };
+}
+
+function calculateTableRowAmountFromValues(row, columns) {
+  const workValue = getTableWorkValue(row, columns);
+  const distanceInfo = getTableDistanceValue(row, columns);
+  const matchedConfig = findMatchingCostConfig(workValue);
+
+  if (!matchedConfig || !workValue || distanceInfo.distance <= 0) {
+    return {
+      work: workValue,
+      distance: distanceInfo.distance,
+      unit: distanceInfo.unit,
+      rate: 0,
+      amount: 0,
+      cost_config_id: null,
+      cost_config_name: "",
+      cost_currency: "INR",
+      columnName: distanceInfo.columnName,
+    };
+  }
+
+  const rate =
+    distanceInfo.unit === "kilometer"
+      ? Number(matchedConfig.cost_per_kilometer) || 0
+      : Number(matchedConfig.cost_per_meter) || 0;
+  const amount = distanceInfo.distance * rate;
+
+  console.debug("Table row amount matched", {
+    work: workValue,
+    matched_config: matchedConfig.name,
+    rate,
+    amount,
+  });
+
+  return {
+    work: workValue,
+    distance: distanceInfo.distance,
+    unit: distanceInfo.unit,
+    rate,
+    amount,
+    cost_config_id: matchedConfig.id || null,
+    cost_config_name: matchedConfig.name || "",
+    cost_currency: matchedConfig.currency || "INR",
+    columnName: distanceInfo.columnName,
+  };
+}
+
+function updateTemplateTableRowAmount(rowEl) {
+  if (!rowEl) return;
+  const tableBody = document.getElementById("templateTableBody");
+  if (!tableBody) return;
+
+  const columns = getTemplateColumns();
+  const rowData = {};
+
+  rowEl.querySelectorAll("input[data-column]").forEach((input) => {
+    const columnName = input.getAttribute("data-column");
+    const columnDef = columns.find((column) => column.name === columnName);
+    if (String(columnDef?.inputType || "text").toLowerCase() === "distance") {
+      const wrapper = input.closest("[data-distance-table-column]");
+      const unitInput = wrapper ? wrapper.querySelector("[data-distance-unit]") : null;
+      const rawDistance = Number(input.value);
+      const normalizedDistance = Number.isFinite(rawDistance) ? Math.max(0, rawDistance) : 0;
+      rowData[columnName] = {
+        type: "distance",
+        distance: normalizedDistance,
+        value: normalizedDistance,
+        unit: unitInput ? unitInput.value : wrapper?.getAttribute("data-distance-unit-value") || "meter",
+      };
+      return;
+    }
+
+    rowData[columnName] = String(input.value || "");
+  });
+
+  const amountCell = rowEl.querySelector("[data-row-amount]");
+  if (!amountCell) return;
+
+  const rowCost = calculateTableRowAmountFromValues(rowData, columns);
+  amountCell.textContent = formatCurrencyValue(rowCost.amount);
+  rowEl.dataset.rowAmount = String(rowCost.amount || 0);
+  rowEl.dataset.rowRate = String(rowCost.rate || 0);
+  rowEl.dataset.rowWork = rowCost.work || "";
+  rowEl.dataset.rowUnit = rowCost.unit || "meter";
+}
+
+function bindTemplateTableRowCostListeners(rowEl) {
+  if (!rowEl || rowEl.dataset.costTrackingBound === "true") return;
+
+  const refreshRowAmount = () => updateTemplateTableRowAmount(rowEl);
+  rowEl.querySelectorAll("input[data-column], [data-distance-unit]").forEach((element) => {
+    element.addEventListener("input", refreshRowAmount);
+    element.addEventListener("change", refreshRowAmount);
+  });
+
+  rowEl.dataset.costTrackingBound = "true";
+  refreshRowAmount();
+}
+
+function formatSubmissionFieldValue(field) {
+  if (!field) return "-";
+  if (String(field.type || "").toLowerCase() === "distance") {
+    const distanceValue = field.distance !== undefined ? field.distance : field.value;
+    const unitValue = field.unit || "meter";
+    const distanceText =
+      distanceValue === null || distanceValue === undefined || distanceValue === ""
+        ? "-"
+        : distanceValue;
+    return `${distanceText} ${unitValue}`.trim();
+  }
+  const value = field.value !== undefined ? field.value : field.distance;
+  return value === null || value === undefined || value === "" ? "-" : value;
+}
+
+function formatTableCellValue(value) {
+  if (value && typeof value === "object") {
+    const isDistance =
+      String(value.type || "").toLowerCase() === "distance" ||
+      Object.prototype.hasOwnProperty.call(value, "distance");
+    if (isDistance) {
+      const distanceValue =
+        value.distance !== undefined ? value.distance : value.value;
+      const unitValue = value.unit || value.distance_unit || "meter";
+      const distanceText =
+        distanceValue === null ||
+        distanceValue === undefined ||
+        distanceValue === ""
+          ? ""
+          : distanceValue;
+      return `${distanceText} ${unitValue}`.trim() || "-";
+    }
+  }
+
+  return value === null || value === undefined || value === "" ? "-" : value;
+}
+
+function renderCostSummarySection(costSummary) {
+  if (
+    !costSummary ||
+    !Array.isArray(costSummary.breakdown) ||
+    costSummary.breakdown.length === 0
+  ) {
+    return "";
+  }
+
+  const rows = costSummary.breakdown
+    .map(
+      (item) => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd;">${item.label || "Distance"}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${item.distance || 0}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${item.unit || "meter"}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">₹${Number(item.rate || 0).toFixed(2)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  return `
+    <div class="cost-summary" style="margin-top: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+        <strong>Cost Summary</strong>
+        <span>Total: ₹${Number(costSummary.total_amount ?? costSummary.total_cost ?? 0).toFixed(2)}</span>
+      </div>
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="background: #f5f5f5;">
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Field</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Distance</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Unit</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Rate</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function updateDistanceFieldCost(fieldKey) {
+  const wrapper = document.querySelector(`[data-distance-field="${fieldKey}"]`);
+  if (!wrapper) return;
+
+  const distanceInput = wrapper.querySelector("[data-distance-distance]");
+  const unitSelect = wrapper.querySelector("[data-distance-unit]");
+  const costPreview = wrapper.querySelector("[data-distance-cost]");
+
+  if (!distanceInput || !costPreview) return;
+
+  const distanceValue = Number(distanceInput.value);
+  const unitValue = unitSelect
+    ? unitSelect.value
+    : wrapper.getAttribute("data-distance-unit-value") || "meter";
+  const costValue = calculateDistanceCost(distanceValue, unitValue, {
+    cost_per_meter: wrapper.getAttribute("data-distance-rate-meter"),
+    cost_per_kilometer: wrapper.getAttribute("data-distance-rate-kilometer"),
+  });
+  costPreview.textContent = `Estimated cost: ₹${Number(costValue || 0).toFixed(2)}`;
+}
+
+function bindDistanceFieldEvents() {
+  document.querySelectorAll("[data-distance-field]").forEach((wrapper) => {
+    const fieldKey = wrapper.getAttribute("data-distance-field");
+    const distanceInput = wrapper.querySelector("[data-distance-distance]");
+    const unitSelect = wrapper.querySelector("[data-distance-unit]");
+
+    if (distanceInput) {
+      distanceInput.addEventListener("input", () => updateDistanceFieldCost(fieldKey));
+    }
+    if (unitSelect) {
+      unitSelect.addEventListener("change", () => updateDistanceFieldCost(fieldKey));
+    }
+
+    updateDistanceFieldCost(fieldKey);
+  });
+}
+
+window.addEventListener("ucat-cost-rates-updated", () => {
+  bindDistanceFieldEvents();
+});
 
 function getTemplateColumns() {
   const template = currentSubmissionContext.template || {};
@@ -108,6 +528,40 @@ function applyColumnPoliciesToRow(tr, rowIndex) {
   const columns = getTemplateColumns();
 
   columns.forEach((column) => {
+    if (String(column.inputType || "text").toLowerCase() === "distance") {
+      const wrapper = tr.querySelector(
+        `[data-distance-table-column="${column.name}"]`,
+      );
+      if (!wrapper) return;
+
+      const input = wrapper.querySelector("[data-distance-value]");
+      const unitInput = wrapper.querySelector("[data-distance-unit]");
+      if (!input) return;
+
+      wrapper.setAttribute("data-distance-rate-meter", String(column.costPerMeter || 0));
+      wrapper.setAttribute("data-distance-rate-kilometer", String(column.costPerKilometer || 0));
+
+      if (unitInput) {
+        unitInput.value = column.distanceUnit || "meter";
+        unitInput.disabled = !!column.unitLocked;
+        unitInput.style.background = column.unitLocked ? "#FFCDD2" : "#FFFFFF";
+        unitInput.style.color = column.unitLocked ? "#333" : "black";
+        unitInput.style.cursor = column.unitLocked ? "not-allowed" : "";
+      }
+
+      if (column.isLocked && column.fixedValue !== "") {
+        input.value = String(column.fixedValue);
+      } else if (!input.value || input.value === "null") {
+        input.value = "";
+      }
+
+      input.disabled = !!column.isLocked;
+      input.style.background = column.isLocked ? "#FFCDD2" : "#FFFFFF";
+      input.style.color = column.isLocked ? "#333" : "black";
+      input.style.cursor = column.isLocked ? "not-allowed" : "";
+      return;
+    }
+
     const input = tr.querySelector(`input[data-column="${column.name}"]`);
     if (!input) return;
 
@@ -136,6 +590,8 @@ function applyColumnPoliciesToRow(tr, rowIndex) {
     input.style.color = shouldDisable ? "#333" : "black";
     input.style.cursor = shouldDisable ? "not-allowed" : "";
   });
+
+  updateTemplateTableRowAmount(tr);
 }
 
 function reindexTemplateTableRows() {
@@ -291,6 +747,8 @@ function renderTemplateForm() {
 
   form.innerHTML = formHTML;
 
+  bindDistanceFieldEvents();
+
   if (template.template_type === "table") {
     addTemplateTableRow();
   }
@@ -314,7 +772,11 @@ function renderTableTemplate(template) {
           <tr style="background: #FFF9C4;">
             ${columns
               .map((col) => {
-                return `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px; color: #333;">${col.name}</th>`;
+                const distanceMeta =
+                  String(col.inputType || "text").toLowerCase() === "distance" && col.costConfigName
+                    ? `<div style="font-size: 10px; color: #666; margin-top: 4px;">${col.costConfigName}</div>`
+                    : "";
+                return `<th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 12px; color: #333;">${col.name}${distanceMeta}</th>`;
               })
               .join("")}
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600; font-size: 12px; color: #333;">Action</th>
@@ -344,14 +806,35 @@ function addTemplateTableRow() {
   const row = document.createElement("tr");
   row.innerHTML = `
     ${columns
-      .map(
-        (col) => `
+      .map((col) => {
+        if (String(col.inputType || "text").toLowerCase() === "distance") {
+          const unitOptions = ["meter", "kilometer"]
+            .map(
+              (unit) => `<option value="${unit}" ${unit === (col.distanceUnit || "meter") ? "selected" : ""}>${unit}</option>`,
+            )
+            .join("");
+          const unitControl = col.unitLocked
+            ? `<span class="distance-unit-label">${col.distanceUnit || "meter"}</span><input type="hidden" value="${col.distanceUnit || "meter"}" data-distance-unit />`
+            : `<select class="form-control" data-distance-unit>${unitOptions}</select>`;
+
+          return `
+      <td style="padding: 8px; border: 1px solid #ddd;">
+        <div data-distance-table-column="${col.name}" data-distance-unit-value="${col.distanceUnit || "meter"}" data-distance-unit-locked="${col.unitLocked ? "true" : "false"}" data-distance-show-cost="${col.showCost ? "true" : "false"}" data-distance-rate-meter="${col.costPerMeter || 0}" data-distance-rate-kilometer="${col.costPerKilometer || 0}" style="display: flex; gap: 8px; align-items: center;">
+          <input type="number" class="form-control" min="0" step="0.01" data-column="${col.name}" data-distance-value />
+          ${unitControl}
+        </div>
+      </td>
+    `;
+        }
+
+        return `
       <td style="padding: 8px; border: 1px solid #ddd;">
         <input type="text" class="form-control" data-column="${col.name}" data-row-index="${rowIndex}" />
       </td>
-    `,
-      )
+    `;
+      })
       .join("")}
+    <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: 600;" data-row-amount>₹0.00</td>
     <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">
       <button type="button" class="btn btn-small btn-danger" onclick="removeTemplateTableRow(this)">Remove</button>
     </td>
@@ -359,6 +842,7 @@ function addTemplateTableRow() {
 
   tableBody.appendChild(row);
   applyColumnPoliciesToRow(row, rowIndex);
+  bindTemplateTableRowCostListeners(row);
 }
 
 function removeTemplateTableRow(buttonEl) {
@@ -369,6 +853,13 @@ function removeTemplateTableRow(buttonEl) {
   if (!tr) return;
   tr.remove();
   reindexTemplateTableRows();
+
+  const tableBody = document.getElementById("templateTableBody");
+  if (tableBody) {
+    Array.from(tableBody.querySelectorAll("tr")).forEach((rowEl) => {
+      updateTemplateTableRowAmount(rowEl);
+    });
+  }
 }
 
 /**
@@ -452,14 +943,35 @@ function renderFieldInput(field, index, label) {
   const fieldName = `field_${index}`;
   const required = field.required ? "required" : "";
   const dataAttr = label ? `data-field-label="${label}"` : "";
+  const fieldType = String(field.type || "text").toLowerCase();
 
-  switch (field.type) {
+  switch (fieldType) {
     case "number":
       return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} ${dataAttr} />`;
     case "decimal":
       return `<input type="number" name="${fieldName}" class="form-control" step="0.01" ${required} ${dataAttr} />`;
     case "date":
       return `<input type="date" name="${fieldName}" class="form-control" ${required} ${dataAttr} />`;
+    case "distance": {
+      const unitValue =
+        String(field.unit || "meter").toLowerCase() === "kilometer"
+          ? "kilometer"
+          : "meter";
+      const unitLocked = !!field.unit_locked;
+      const showCost = !!field.show_cost;
+      const rateBundle = getDistanceRateBundle(field);
+
+      return `
+        <div class="distance-field" data-distance-field="${fieldName}" data-distance-unit-value="${unitValue}" data-distance-unit-locked="${unitLocked ? "true" : "false"}" data-distance-show-cost="${showCost ? "true" : "false"}" data-distance-rate-meter="${rateBundle.cost_per_meter}" data-distance-rate-kilometer="${rateBundle.cost_per_kilometer}" data-cost-config-id="${rateBundle.cost_config_id || ""}" data-cost-config-name="${rateBundle.cost_config_name || ""}">
+          <div class="distance-input-row">
+            <input type="number" name="${fieldName}_distance" class="form-control" min="0" step="0.01" ${required} ${dataAttr} data-field-type="distance" data-distance-distance />
+            ${unitLocked ? `<span class="distance-unit-label">${unitValue}</span><input type="hidden" name="${fieldName}_unit" value="${unitValue}" data-distance-unit />` : `<select name="${fieldName}_unit" class="form-control" data-distance-unit><option value="meter" ${unitValue === "meter" ? "selected" : ""}>meter</option><option value="kilometer" ${unitValue === "kilometer" ? "selected" : ""}>kilometer</option></select>`}
+          </div>
+          ${rateBundle.cost_config_name ? `<div class="distance-cost-preview">Rate source: ${rateBundle.cost_config_name}</div>` : ""}
+          ${showCost ? `<div class="distance-cost-preview" data-distance-cost>Estimated cost: ₹0.00</div>` : ""}
+        </div>
+      `;
+    }
     case "textarea":
       return `<textarea name="${fieldName}" class="form-control" rows="3" ${required} ${dataAttr}></textarea>`;
     case "select":
@@ -490,6 +1002,7 @@ function handleTemplateSubmit(e) {
     const tableBody = document.getElementById("templateTableBody");
     const rows = [];
     const columns = getTemplateColumns();
+    const columnMap = new Map(columns.map((column) => [column.name, column]));
     const columnNames = columns.map((column) => column.name);
 
     if (tableBody) {
@@ -499,6 +1012,43 @@ function handleTemplateSubmit(e) {
 
         row.querySelectorAll("input[data-column]").forEach((input) => {
           const column = input.getAttribute("data-column");
+          const columnDef = columnMap.get(column);
+
+          if (String(columnDef?.inputType || "text").toLowerCase() === "distance") {
+            const wrapper = input.closest("[data-distance-table-column]");
+            const unitInput = wrapper ? wrapper.querySelector("[data-distance-unit]") : null;
+            const rawDistance = input.value;
+            const numericDistance = Number(rawDistance);
+            const normalizedDistance =
+              rawDistance === null || rawDistance === undefined || rawDistance === ""
+                ? null
+                : Number.isFinite(numericDistance)
+                  ? Math.max(0, numericDistance)
+                  : null;
+            const unitValue = unitInput
+              ? unitInput.value
+              : wrapper?.getAttribute("data-distance-unit-value") || "meter";
+
+            rowData[column] = {
+              type: "distance",
+              distance: normalizedDistance,
+              value: normalizedDistance,
+              unit: unitValue,
+              cost_per_meter: Number(wrapper?.getAttribute("data-distance-rate-meter") || columnDef?.costPerMeter || 0),
+              cost_per_kilometer: Number(wrapper?.getAttribute("data-distance-rate-kilometer") || columnDef?.costPerKilometer || 0),
+              cost_currency: columnDef?.costCurrency || "INR",
+              cost_config_id: columnDef?.costConfigId || null,
+              cost_config_name: columnDef?.costConfigName || "",
+              unit_locked:
+                wrapper?.getAttribute("data-distance-unit-locked") === "true",
+              show_cost:
+                wrapper?.getAttribute("data-distance-show-cost") === "true",
+            };
+
+            if (normalizedDistance !== null) hasValue = true;
+            return;
+          }
+
           const value = input.value;
           rowData[column] =
             value === null || value === undefined || value === "null"
@@ -518,6 +1068,28 @@ function handleTemplateSubmit(e) {
           }
         });
 
+        const tableRowCost = calculateTableRowAmountFromValues(rowData, columns);
+        rowData.work = tableRowCost.work || rowData.work || "";
+        rowData.rate = tableRowCost.rate || 0;
+        rowData.amount = tableRowCost.amount || 0;
+        rowData.cost_config_id = tableRowCost.cost_config_id || null;
+        rowData.cost_config_name = tableRowCost.cost_config_name || "";
+        rowData.cost_currency = tableRowCost.cost_currency || "INR";
+
+        if (Object.prototype.hasOwnProperty.call(rowData, tableRowCost.columnName || "")) {
+          const originalDistanceCell = rowData[tableRowCost.columnName];
+          if (originalDistanceCell && typeof originalDistanceCell === "object") {
+            rowData.distance_value = tableRowCost.distance;
+            rowData.distance_unit = tableRowCost.unit;
+          } else {
+            rowData.distance = tableRowCost.distance;
+            rowData.unit = tableRowCost.unit;
+          }
+        } else {
+          rowData.distance = tableRowCost.distance;
+          rowData.unit = tableRowCost.unit;
+        }
+
         if (hasValue) rows.push(rowData);
       });
     }
@@ -536,8 +1108,47 @@ function handleTemplateSubmit(e) {
 
     if (formEl) {
       formEl.querySelectorAll("[data-field-label]").forEach((input) => {
+        const fieldLabel = input.getAttribute("data-field-label");
+        const fieldType = String(input.getAttribute("data-field-type") || "text").toLowerCase();
+        const templateField = Array.isArray(currentSubmissionContext.template?.fields)
+          ? currentSubmissionContext.template.fields.find(
+              (item) => String(item.label || item.name || "").trim() === fieldLabel,
+            )
+          : null;
+
+        if (fieldType === "distance") {
+          const wrapper = input.closest("[data-distance-field]");
+          const unitInput = wrapper ? wrapper.querySelector("[data-distance-unit]") : null;
+          const rawDistance = Number(input.value);
+          const normalizedDistance = Number.isFinite(rawDistance)
+            ? Math.max(0, rawDistance)
+            : null;
+          const unitValue = unitInput
+            ? unitInput.value
+            : wrapper?.getAttribute("data-distance-unit-value") || "meter";
+
+          fields.push({
+            label: fieldLabel,
+            type: "distance",
+            distance: normalizedDistance,
+            value: normalizedDistance,
+            unit: unitValue,
+            cost_per_meter: Number(wrapper?.getAttribute("data-distance-rate-meter") || templateField?.costPerMeter || 0),
+            cost_per_kilometer: Number(wrapper?.getAttribute("data-distance-rate-kilometer") || templateField?.costPerKilometer || 0),
+            cost_currency: templateField?.costCurrency || "INR",
+            cost_config_id: templateField?.costConfigId || null,
+            cost_config_name: templateField?.costConfigName || "",
+            unit_locked:
+              wrapper?.getAttribute("data-distance-unit-locked") === "true",
+            show_cost:
+              wrapper?.getAttribute("data-distance-show-cost") === "true",
+          });
+          return;
+        }
+
         fields.push({
-          label: input.getAttribute("data-field-label"),
+          label: fieldLabel,
+          type: fieldType,
           value: input.value,
         });
       });
@@ -758,6 +1369,7 @@ function renderSubmissionData(submission) {
               row[col] === null || row[col] === undefined || row[col] === "null"
                 ? ""
                 : row[col];
+            value = formatTableCellValue(value);
             if (
               isSummary &&
               labelColumn &&
@@ -792,7 +1404,7 @@ function renderSubmissionData(submission) {
         (field) => `
       <tr>
         <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label}</td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || "-"}</td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${formatSubmissionFieldValue(field)}</td>
       </tr>
     `,
       )
@@ -810,6 +1422,7 @@ function renderSubmissionData(submission) {
           <tbody>${fieldRows}</tbody>
         </table>
       </div>
+      ${renderCostSummarySection(data._cost_summary)}
     `;
   }
 
@@ -843,6 +1456,7 @@ function renderSubmissionData(submission) {
       <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
         ${rowBlocks}
       </div>
+      ${renderCostSummarySection(data._cost_summary)}
     `;
   }
 
@@ -850,6 +1464,7 @@ function renderSubmissionData(submission) {
     <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
       <pre style="margin: 0;">${JSON.stringify(data, null, 2)}</pre>
     </div>
+    ${renderCostSummarySection(data._cost_summary)}
   `;
 }
 
@@ -921,7 +1536,21 @@ function prefillTemplateFormFromSubmission(submission) {
   if (Array.isArray(data.fields)) {
     data.fields.forEach((field) => {
       const input = formEl.querySelector(`[data-field-label="${field.label}"]`);
-      if (input) input.value = field.value || "";
+      if (!input) return;
+
+      if (String(field.type || "").toLowerCase() === "distance") {
+        input.value = field.distance ?? field.value ?? "";
+        const wrapper = input.closest("[data-distance-field]");
+        const unitInput = wrapper ? wrapper.querySelector("[data-distance-unit]") : null;
+        if (unitInput && field.unit) {
+          unitInput.value = field.unit;
+        }
+        if (wrapper) {
+          updateDistanceFieldCost(wrapper.getAttribute("data-distance-field"));
+        }
+      } else {
+        input.value = field.value || "";
+      }
     });
   }
 
@@ -959,6 +1588,19 @@ function prefillTemplateFormFromSubmission(submission) {
         if (!tr) return;
         tr.querySelectorAll("input[data-column]").forEach((input) => {
           const col = input.getAttribute("data-column");
+          const columnDef = getTemplateColumns().find((item) => item.name === col);
+          const cellValue = rowObj[col];
+
+          if (String(columnDef?.inputType || "text").toLowerCase() === "distance" && cellValue && typeof cellValue === "object") {
+            input.value = cellValue.distance ?? cellValue.value ?? "";
+            const wrapper = input.closest("[data-distance-table-column]");
+            const unitInput = wrapper ? wrapper.querySelector("[data-distance-unit]") : null;
+            if (unitInput && cellValue.unit) {
+              unitInput.value = cellValue.unit;
+            }
+            return;
+          }
+
           input.value = rowObj[col] || "";
         });
       });

@@ -28,6 +28,40 @@ function renderSelectProjectPlaceholder() {
     '<tr><td colspan="6" style="text-align:center; padding:20px; color:#777;">Open a project to view submissions</td></tr>';
 }
 
+function resolveSubmissionTemplateName(submission) {
+  if (!submission) return "N/A";
+
+  const snapshot = submission.template_snapshot || {};
+  const template = submission.template || {};
+  return (
+    snapshot.name ||
+    snapshot.template_name ||
+    template.name ||
+    submission.template_name ||
+    "N/A"
+  );
+}
+
+function normalizeCostRateBundle(source = {}) {
+  return {
+    cost_per_meter: Number(source.cost_per_meter ?? source.costPerMeter) || 0,
+    cost_per_kilometer:
+      Number(source.cost_per_kilometer ?? source.costPerKilometer) || 0,
+  };
+}
+
+function formatMoney(amount) {
+  return `₹${(Number(amount) || 0).toFixed(2)}`;
+}
+
+function getFallbackActiveCostRates() {
+  if (typeof window !== "undefined" && window.activeCostRates) {
+    return normalizeCostRateBundle(window.activeCostRates);
+  }
+
+  return { cost_per_meter: 0, cost_per_kilometer: 0 };
+}
+
 /**
  * Load submissions for selected project
  */
@@ -39,12 +73,12 @@ function loadPMSubmissions() {
     return;
   }
 
-  const templateFilter =
-    document.getElementById("pmSubmissionTemplateFilter")?.value || "";
-  const statusFilter =
-    document.getElementById("pmSubmissionStatusFilter")?.value || "";
-  const dateFilter =
-    document.getElementById("pmSubmissionDateFilter")?.value || "";
+  const templateFilterEl = document.getElementById("pmSubmissionTemplateFilter");
+  const statusFilterEl = document.getElementById("pmSubmissionStatusFilter");
+  const dateFilterEl = document.getElementById("pmSubmissionDateFilter");
+  const templateFilter = templateFilterEl ? templateFilterEl.value : "";
+  const statusFilter = statusFilterEl ? statusFilterEl.value : "";
+  const dateFilter = dateFilterEl ? dateFilterEl.value : "";
 
   fetch(`/api/project-templates/${currentProjectId}/submissions`, {
     headers: getAuthHeaders(),
@@ -67,7 +101,7 @@ function loadPMSubmissions() {
 
         pmSubmissionsCache = submissions;
         renderPMSubmissions(submissions);
-        loadTemplatesForFilter();
+        loadTemplatesForFilter(submissions);
       } else {
         pmSubmissionsCache = [];
         renderPMSubmissions([]);
@@ -75,6 +109,7 @@ function loadPMSubmissions() {
     })
     .catch((error) => {
       console.error("Error loading submissions:", error);
+      renderPMSubmissions([]);
       showToast("Failed to load submissions", "error");
     });
 }
@@ -82,34 +117,118 @@ function loadPMSubmissions() {
 /**
  * Load templates for filter dropdown
  */
-function loadTemplatesForFilter() {
+function loadTemplatesForFilter(submissions = pmSubmissionsCache) {
   const currentProjectId = effectivePMProjectId();
   if (!currentProjectId) return;
 
-  fetch(`/api/project-templates/${currentProjectId}`, {
-    headers: getAuthHeaders(),
-  })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.success && Array.isArray(data.data)) {
-        const select = document.getElementById("pmSubmissionTemplateFilter");
-        if (!select) return;
+  const select = document.getElementById("pmSubmissionTemplateFilter");
+  if (!select) return;
 
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">All Templates</option>';
+  const currentValue = select.value;
+  const uniqueTemplates = new Map();
 
-        data.data.forEach((assignment) => {
-          const option = document.createElement("option");
-          option.value = assignment.template_id;
-          option.textContent =
-            assignment.template?.name || assignment.name || "Template";
-          select.appendChild(option);
-        });
+  (Array.isArray(submissions) ? submissions : []).forEach((submission) => {
+    const templateId = String(submission.template_id || "");
+    if (!templateId) return;
 
-        select.value = currentValue;
-      }
-    })
-    .catch((error) => console.error("Error loading templates:", error));
+    if (!uniqueTemplates.has(templateId)) {
+      uniqueTemplates.set(templateId, {
+        template_id: templateId,
+        name: resolveSubmissionTemplateName(submission),
+      });
+    }
+  });
+
+  select.innerHTML = '<option value="">All Templates</option>';
+  Array.from(uniqueTemplates.values()).forEach((template) => {
+    const option = document.createElement("option");
+    option.value = template.template_id;
+    option.textContent = template.name || "Template";
+    select.appendChild(option);
+  });
+
+  select.value = currentValue;
+}
+
+function getTemplateColumnsFromSubmission(submission) {
+  const templateColumns = submission?.template?.columns;
+  if (Array.isArray(templateColumns) && templateColumns.length > 0) {
+    return templateColumns;
+  }
+
+  const snapshotColumns = submission?.template_snapshot?.columns;
+  return Array.isArray(snapshotColumns) ? snapshotColumns : [];
+}
+
+function findTemplateColumnByName(columns, columnName) {
+  return (Array.isArray(columns) ? columns : []).find((column) => {
+    if (!column || typeof column !== "object") return false;
+    return String(column.name || column.label || "").trim() === String(columnName || "").trim();
+  });
+}
+
+function readDistanceCell(row, columnName) {
+  if (!row || !columnName) return null;
+
+  const value = row[columnName];
+  if (value && typeof value === "object") {
+    const parsedDistance = Number.parseFloat(value.distance ?? value.value);
+    return {
+      distance: Number.isFinite(parsedDistance) ? parsedDistance : null,
+      unit: String(value.unit || value.distance_unit || "meter").toLowerCase(),
+      cost_per_meter: Number(value.cost_per_meter ?? value.costPerMeter) || 0,
+      cost_per_kilometer:
+        Number(value.cost_per_kilometer ?? value.costPerKilometer) || 0,
+    };
+  }
+
+  const parsedDistance = Number.parseFloat(value);
+  return {
+    distance: Number.isFinite(parsedDistance) ? parsedDistance : null,
+    unit: "meter",
+    cost_per_meter: 0,
+    cost_per_kilometer: 0,
+  };
+}
+
+function firstPositiveRate(...values) {
+  for (const value of values) {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return numericValue;
+    }
+  }
+
+  return 0;
+}
+
+function calculateSubmissionRowAmount(row, columnName, templateRates, summaryRates) {
+  const distanceCell = readDistanceCell(row, columnName);
+  if (!distanceCell || distanceCell.distance === null || distanceCell.distance <= 0) {
+    return 0;
+  }
+
+  const rates = normalizeCostRateBundle({
+    cost_per_meter:
+      firstPositiveRate(
+        distanceCell.cost_per_meter,
+        templateRates.cost_per_meter,
+        summaryRates.cost_per_meter,
+      ),
+    cost_per_kilometer:
+      firstPositiveRate(
+        distanceCell.cost_per_kilometer,
+        templateRates.cost_per_kilometer,
+        summaryRates.cost_per_kilometer,
+      ),
+  });
+
+  const rateValue =
+    distanceCell.unit === "kilometer"
+      ? rates.cost_per_kilometer
+      : rates.cost_per_meter;
+
+  return distanceCell.distance * Number(rateValue || 0);
 }
 
 /**
@@ -119,7 +238,7 @@ function renderPMSubmissions(submissions) {
   const tbody = document.getElementById("submissionsTableBody");
   if (!tbody) return;
 
-  if (!submissions || submissions.length === 0) {
+  if (!Array.isArray(submissions) || submissions.length === 0) {
     tbody.innerHTML =
       '<tr><td colspan="6" style="text-align:center; padding:20px;">No submissions found</td></tr>';
     return;
@@ -129,7 +248,7 @@ function renderPMSubmissions(submissions) {
     .map(
       (submission) => `
     <tr style="background: ${submission.status === "submitted" ? "#fffbea" : ""};">
-      <td>${submission.template?.name || "N/A"}</td>
+      <td>${resolveSubmissionTemplateName(submission)}</td>
       <td>${submission.submitted_by_name || submission.submitted_by || "Unknown"}</td>
       <td>${formatDate(submission.submission_date)}</td>
       <td>
@@ -163,8 +282,10 @@ function reviewSubmission(submissionId) {
         if (typeof openModal === "function") {
           openModal("reviewSubmissionModal");
         } else {
-          document.getElementById("reviewSubmissionModal").style.display =
-            "flex";
+          const modal = document.getElementById("reviewSubmissionModal");
+          if (modal) {
+            modal.style.display = "flex";
+          }
         }
       } else {
         showToast(data.error || "Failed to load submission", "error");
@@ -182,13 +303,15 @@ function reviewSubmission(submissionId) {
 function renderReviewModal(submission) {
   const titleEl = document.getElementById("reviewModalTitle");
   const contentEl = document.getElementById("reviewSubmissionContent");
+  if (!titleEl || !contentEl) return;
 
-  titleEl.textContent = `${submission.template?.name || "Submission"} - ${formatDate(submission.submission_date)}`;
+  const templateName = resolveSubmissionTemplateName(submission);
+  titleEl.textContent = `${templateName} - ${formatDate(submission.submission_date)}`;
 
   let html = `
     <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
       <div>
-        <p><strong>Template:</strong> ${submission.template?.name || "N/A"}</p>
+        <p><strong>Template:</strong> ${templateName || "N/A"}</p>
         <p><strong>Submitted By:</strong> ${submission.submitted_by_name || submission.submitted_by || "Unknown"}</p>
         <p><strong>Date:</strong> ${formatDate(submission.submission_date)}</p>
       </div>
@@ -216,100 +339,96 @@ function renderReviewModal(submission) {
   renderSubmissionGraph(submission);
 }
 
+/**
+ * Render submissions in table
+ */
 function renderSubmissionData(submission) {
-  const snapshot = submission.template_snapshot || submission.template || {};
-  const templateType = snapshot.template_type || "form";
-  const data = submission.data || {};
-
-  if (templateType === "table" && Array.isArray(data.rows)) {
-    const columns = (snapshot.columns || data.columns || [])
-      .map((column) => {
-        if (typeof column === "string") {
-          return { name: column, isLocked: false, formulaType: null };
+  const rawData = submission.data;
+  const data = typeof rawData === "string"
+    ? (() => {
+        try {
+          return JSON.parse(rawData);
+        } catch (error) {
+          return { raw: rawData };
         }
-        if (column && typeof column === "object") {
-          return {
-            name: column.name || "",
-            isLocked: !!column.isLocked,
-            formulaType: column.formulaType || column.formula_type || null,
-          };
+      })()
+    : rawData || {};
+  const templateType =
+    (submission.template_snapshot && submission.template_snapshot.template_type) ||
+    (submission.template && submission.template.template_type) ||
+    "form";
+  const costSummary = data._cost_summary || {};
+  const costBreakdown = Array.isArray(costSummary.breakdown)
+    ? costSummary.breakdown
+    : [];
+
+  function formatCellValue(value) {
+    if (value && typeof value === "object") {
+      const isDistance =
+        String(value.type || "").toLowerCase() === "distance" ||
+        Object.prototype.hasOwnProperty.call(value, "distance");
+      if (isDistance) {
+        const distanceValue =
+          value.distance !== undefined && value.distance !== null
+            ? value.distance
+            : value.value;
+        const unitValue = value.unit || value.distance_unit || "meter";
+        if (
+          distanceValue === null ||
+          distanceValue === undefined ||
+          distanceValue === ""
+        ) {
+          return "-";
         }
-        return { name: "", isLocked: false, formulaType: null };
-      })
-      .filter((c) => c.name);
+        return `${distanceValue} ${unitValue}`.trim();
+      }
 
-    const labelColumn =
-      columns.find((column) => !column.formulaType)?.name || columns[0]?.name;
-    const header = columns
-      .map(
-        (col) =>
-          `<th style="padding: 10px; text-align: left; border: 1px solid #ddd; color: #333;">${col.name}</th>`,
-      )
-      .join("");
-    const body = data.rows
-      .map((row) => {
-        const isSummary = row && row.__summaryType;
-        return `
-      <tr style="${isSummary ? "background: #fff8db;" : ""}">
-        ${columns
-          .map((col) => {
-            const bgColor = isSummary
-              ? "#fff8db"
-              : col.isLocked
-                ? "#FFCDD2"
-                : "#FFFFFF";
-            const color = col.isLocked ? "#333" : "black";
-            let value =
-              row[col.name] === null ||
-              row[col.name] === undefined ||
-              row[col.name] === "null"
-                ? ""
-                : row[col.name];
-            if (isSummary && labelColumn && col.name === labelColumn) {
-              const summaryLabel = row.__summaryLabel || "";
-              if (summaryLabel) {
-                if (!value) {
-                  value = summaryLabel;
-                } else if (String(value) !== summaryLabel) {
-                  value = `${summaryLabel}: ${value}`;
-                }
-              }
-            }
-            return `<td style="padding: 8px; border: 1px solid #ddd; background-color: ${bgColor}; color: ${color};${isSummary ? " font-weight: 600; border-top: 2px solid #f0cf6d;" : ""}">${value}</td>`;
-          })
-          .join("")}
-      </tr>
-    `;
-      })
-      .join("");
+      return value.value !== undefined ? value.value : JSON.stringify(value);
+    }
 
-    return `
-      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse;">
-          <thead><tr style="background: #FFF9C4;">${header}</tr></thead>
-          <tbody>${body}</tbody>
+    if (value === null || value === undefined || value === "null") {
+      return "-";
+    }
+
+    return value;
+  }
+
+  let html = "";
+
+  if (costBreakdown.length > 0) {
+    html += `
+      <div class="cost-summary" style="margin-top: 16px; background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+          <strong>Cost Summary</strong>
+          <span>Total: ${formatMoney(costSummary.total_amount ?? costSummary.total_cost ?? 0)}</span>
+        </div>
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f5f5f5;">
+              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Field</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Distance</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Unit</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${costBreakdown.map((item) => `
+              <tr>
+                <td style="padding:8px; border:1px solid #ddd;">${item.label || "Distance"}</td>
+                <td style="padding:8px; border:1px solid #ddd;">${item.distance || 0}</td>
+                <td style="padding:8px; border:1px solid #ddd;">${item.unit || "meter"}</td>
+                <td style="padding:8px; border:1px solid #ddd;">₹${Number(item.rate || 0).toFixed(2)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
         </table>
-      </div>
-      <div id="submissionGraphContainer" style="margin-top: 16px; background: #fff; padding: 14px; border-radius: 6px; border: 1px solid #eee;">
-        <div style="color: #666; font-size: 12px;">Preparing graph...</div>
       </div>
     `;
   }
 
   if (Array.isArray(data.fields)) {
-    const rows = data.fields
-      .map(
-        (field) => `
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label || field.name || "Field"}</td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${field.value || "-"}</td>
-      </tr>
-    `,
-      )
-      .join("");
-
-    return `
-      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+    html += `
+      <div style="margin-top: 16px; background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee;">
         <table style="width: 100%; border-collapse: collapse;">
           <thead>
             <tr style="background: #e0e0e0;">
@@ -317,55 +436,237 @@ function renderSubmissionData(submission) {
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Value</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>
+            ${data.fields
+              .map(
+                (field) => `
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${field.label || field.name || "Field"}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">${String(field.type || "").toLowerCase() === "distance" ? formatCellValue(field) : formatCellValue(field.value !== undefined ? field.value : field.distance)}</td>
+                </tr>
+              `,
+              )
+              .join("")}
+          </tbody>
         </table>
       </div>
     `;
-  }
+  } else if (templateType === "table" && Array.isArray(data.rows)) {
+    const columns = Array.isArray(data.columns) && data.columns.length > 0
+      ? data.columns.map((column) => {
+          if (typeof column === "string") {
+            return { name: column, label: column };
+          }
 
-  if (Array.isArray(data.rows)) {
-    const rowBlocks = data.rows
-      .map((row) => {
-        const cells = Array.isArray(row.cells) ? row.cells : [];
-        const cellRows = cells
-          .map((cell) => {
-            // FIX: Bug3 - Avoid [object Object] by resolving cell label/value safely.
-            const cellLabel =
-              typeof cell === "object" ? cell.label || "Cell" : String(cell);
-            const cellValue =
-              typeof cell === "object" ? cell.value || "-" : "-";
-            return `
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cellLabel}</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${cellValue}</td>
-              </tr>
-            `;
+          return {
+            name: column.name || column.label || "Column",
+            label: column.label || column.name || "Column",
+          };
+        })
+      : Object.keys(data.rows[0] || {}).map((columnName) => ({
+          name: columnName,
+          label: columnName,
+        }));
+
+    const templateColumns = getTemplateColumnsFromSubmission(submission);
+
+    const distanceColumnIndex = columns.findIndex((column) =>
+      /distance/i.test(String(column.label || column.name || "")),
+    );
+    const costBreakdown = Array.isArray(costSummary.breakdown)
+      ? costSummary.breakdown
+      : [];
+    const costRates = costSummary.rates_snapshot || {};
+    const fallbackRates = getFallbackActiveCostRates();
+    const summaryTotalAmount = Number(costSummary.total_amount ?? costSummary.total_cost ?? 0);
+
+    function getColumnRates(columnName) {
+      const templateColumn = findTemplateColumnByName(templateColumns, columnName);
+      if (!templateColumn) {
+        return fallbackRates;
+      }
+
+      return normalizeCostRateBundle({
+        cost_per_meter: templateColumn.costPerMeter ?? templateColumn.cost_per_meter,
+        cost_per_kilometer:
+          templateColumn.costPerKilometer ?? templateColumn.cost_per_kilometer,
+      });
+    }
+
+    function getNumericDistance(value) {
+      if (value && typeof value === "object") {
+        const distanceValue =
+          value.distance !== undefined && value.distance !== null
+            ? value.distance
+            : value.value;
+        const parsedDistance = Number.parseFloat(distanceValue);
+        return Number.isFinite(parsedDistance) ? parsedDistance : null;
+      }
+
+      const parsedDistance = Number.parseFloat(value);
+      return Number.isFinite(parsedDistance) ? parsedDistance : null;
+    }
+
+    function getRowAmount(row, rowIndex) {
+      const savedAmount = Number(row?.amount ?? row?._cost?.amount);
+      if (Number.isFinite(savedAmount) && savedAmount > 0) {
+        return savedAmount;
+      }
+
+      const breakdownItem = costBreakdown[rowIndex];
+      if (breakdownItem && Number.isFinite(Number(breakdownItem.cost))) {
+        const breakdownCost = Number(breakdownItem.cost);
+        if (breakdownCost > 0) {
+          return breakdownCost;
+        }
+      }
+
+      if (distanceColumnIndex < 0) return 0;
+
+      const distanceValue = row[columns[distanceColumnIndex].name];
+      const numericDistance = getNumericDistance(distanceValue);
+      if (numericDistance === null) return 0;
+
+      const columnRates = getColumnRates(columns[distanceColumnIndex].name);
+      const rowRates =
+        distanceValue && typeof distanceValue === "object"
+          ? normalizeCostRateBundle({
+              cost_per_meter: firstPositiveRate(
+                distanceValue.cost_per_meter,
+                distanceValue.costPerMeter,
+                costRates.cost_per_meter,
+                columnRates.cost_per_meter,
+                fallbackRates.cost_per_meter,
+              ),
+              cost_per_kilometer: firstPositiveRate(
+                distanceValue.cost_per_kilometer,
+                distanceValue.costPerKilometer,
+                costRates.cost_per_kilometer,
+                columnRates.cost_per_kilometer,
+                fallbackRates.cost_per_kilometer,
+              ),
+            })
+          : normalizeCostRateBundle({
+              cost_per_meter: firstPositiveRate(
+                costRates.cost_per_meter,
+                columnRates.cost_per_meter,
+                fallbackRates.cost_per_meter,
+              ),
+              cost_per_kilometer: firstPositiveRate(
+                costRates.cost_per_kilometer,
+                columnRates.cost_per_kilometer,
+                fallbackRates.cost_per_kilometer,
+              ),
+            });
+
+      const unitValue =
+        (distanceValue && typeof distanceValue === "object" && (distanceValue.unit || distanceValue.distance_unit)) ||
+        "meter";
+      const rateValue =
+        String(unitValue).toLowerCase() === "kilometer"
+          ? Number(rowRates.cost_per_kilometer || 0)
+          : Number(rowRates.cost_per_meter || 0);
+
+      return numericDistance * rateValue;
+    }
+
+    let totalAmount = 0;
+
+    const headerHtml = [...columns, { name: "__amount", label: "Amount" }]
+      .map(
+        (column) =>
+          `<th style="padding: 10px; text-align: left; border: 1px solid #ddd; background: #f6f6f6;">${column.label}</th>`,
+      )
+      .join("");
+
+    const bodyHtml = data.rows
+      .filter((row) => row && !row.__summaryType)
+      .map((row, rowIndex) => {
+        const rowValues = columns
+          .map((column, columnIndex) => {
+            if (columnIndex !== distanceColumnIndex) {
+              return `<td style="padding: 8px; border: 1px solid #ddd;">${formatCellValue(row[column.name])}</td>`;
+            }
+
+            return `<td style="padding: 8px; border: 1px solid #ddd;">${formatCellValue(row[column.name])}</td>`;
           })
           .join("");
 
-        return `
-          <div style="margin-bottom: 12px;">
-            <div style="font-weight: 600; margin-bottom: 6px;">${row.label || "Row"}</div>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tbody>${cellRows}</tbody>
-            </table>
-          </div>
-        `;
+        const totalCell =
+          distanceColumnIndex >= 0
+            ? (() => {
+                const rowAmount = getRowAmount(row, rowIndex);
+                totalAmount += rowAmount;
+                return `<td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${formatMoney(rowAmount || 0)}</td>`;
+              })()
+            : `<td style="padding: 8px; border: 1px solid #ddd;"></td>`;
+
+        return `<tr>${rowValues}${totalCell}</tr>`;
       })
       .join("");
 
-    return `
-      <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
-        ${rowBlocks}
+    const totalRowHtml =
+      distanceColumnIndex >= 0
+        ? `<tr style="background: #fafafa; font-weight: 600;"><td style="padding: 8px; border: 1px solid #ddd;" colspan="${columns.length}">Total</td><td style="padding: 8px; border: 1px solid #ddd;">${formatMoney(summaryTotalAmount > 0 ? summaryTotalAmount : totalAmount)}</td></tr>`
+        : "";
+
+    html += `
+      <div style="margin-top: 16px; background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; min-width: 720px;">
+          <thead>
+            <tr>${headerHtml}</tr>
+          </thead>
+          <tbody>${bodyHtml}${totalRowHtml}</tbody>
+        </table>
+      </div>
+    `;
+  } else if (Array.isArray(data.rows)) {
+    html += `
+      <div style="margin-top: 16px; background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #eee;">
+        ${data.rows
+          .map((row) => {
+            const rowLabel = row && row.label ? row.label : "Row";
+            const cells = Array.isArray(row && row.cells) ? row.cells : [];
+            const rowsHtml = cells
+              .map((cell) => {
+                const cellLabel =
+                  cell && typeof cell === "object"
+                    ? cell.label || "Cell"
+                    : String(cell);
+                const cellValue =
+                  cell && typeof cell === "object"
+                    ? formatCellValue(cell.value !== undefined ? cell.value : cell.distance)
+                    : "-";
+                return `
+                  <tr>
+                    <td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${cellLabel}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd;">${cellValue}</td>
+                  </tr>
+                `;
+              })
+              .join("");
+
+            return `
+              <div style="margin-bottom: 12px;">
+                <div style="font-weight: 600; margin-bottom: 6px;">${rowLabel}</div>
+                <table style="width: 100%; border-collapse: collapse;">
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>
+            `;
+          })
+          .join("")}
       </div>
     `;
   }
 
-  return `
-    <div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
-      <pre style="margin: 0;">${JSON.stringify(data, null, 2)}</pre>
-    </div>
-  `;
+  if (!html) {
+    html = `<div style="background: #f5f5f5; padding: 15px; border-radius: 6px;">
+      <pre style="margin: 0; white-space: pre-wrap; word-break: break-word;">${JSON.stringify(data, null, 2)}</pre>
+    </div>`;
+  }
+
+  return html;
 }
 
 function renderSubmissionGraph(submission) {

@@ -169,6 +169,33 @@ function normalizeRepetitionDays(input) {
   return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 }
 
+function validateDistanceFields(value, pathLabel = "field") {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      validateDistanceFields(entry, `${pathLabel}[${index}]`);
+    });
+    return;
+  }
+
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  if (String(value.type || "").toLowerCase() === "distance") {
+    const unit = String(value.unit || "").trim().toLowerCase();
+    if (!["meter", "kilometer"].includes(unit)) {
+      throw new Error(`Invalid distance unit for ${pathLabel}: ${value.label || value.name || "distance"}`);
+    }
+  }
+
+  Object.entries(value).forEach(([key, child]) => {
+    if (key === "_cost_summary") return;
+    if (child && typeof child === "object") {
+      validateDistanceFields(child, `${pathLabel}.${key}`);
+    }
+  });
+}
+
 async function assignTemplateToProjectNow({
   projectId,
   templateId,
@@ -218,6 +245,12 @@ router.post(
       const templateType = template_type || "form";
       const normalizedColumns = normalizeTemplateColumns(columns);
       const templateStatus = normalizeTemplateStatus(status || "pushed");
+
+      try {
+        validateDistanceFields(fields || [], "fields");
+      } catch (validationError) {
+        return res.status(400).json({ error: validationError.message });
+      }
 
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });
@@ -633,6 +666,12 @@ router.put(
       const templateType = template_type || "form";
       const normalizedColumns = normalizeTemplateColumns(columns);
       const templateStatus = normalizeTemplateStatus(status || "pushed");
+
+      try {
+        validateDistanceFields(fields || [], "fields");
+      } catch (validationError) {
+        return res.status(400).json({ error: validationError.message });
+      }
 
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });

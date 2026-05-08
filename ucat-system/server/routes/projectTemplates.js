@@ -5,6 +5,7 @@ import xlsx from "xlsx";
 import ExcelJS from "exceljs";
 import pool from "../db.js";
 import { requireRole } from "../middleware/role.js";
+import { calculateCost, getActiveRates } from "../utils/costRate.js";
 
 const router = express.Router();
 
@@ -193,8 +194,315 @@ function normalizeColumnRole(value) {
   return null;
 }
 
+function normalizeCostConfigName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function isDistanceCellValue(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    (String(value.type || "").toLowerCase() === "distance" ||
+      Object.prototype.hasOwnProperty.call(value, "distance"))
+  );
+}
+
+function extractTableRowWorkValue(row, columns = []) {
+  const preferredColumns = (Array.isArray(columns) ? columns : [])
+    .filter((column) => {
+      if (!column || typeof column !== "object") return false;
+      const inputType = String(
+        column.inputType || column.fieldType || column.columnType || "",
+      )
+        .trim()
+        .toLowerCase();
+      return inputType !== "distance";
+    })
+    .map((column) => String(column.name || column.label || "").trim())
+    .filter(Boolean);
+
+  const preferredNameMatches = preferredColumns.filter((columnName) =>
+    /work|material|item|name|description|task/i.test(columnName),
+  );
+
+  const candidateColumns = [...preferredNameMatches, ...preferredColumns].filter(
+    (columnName, index, array) => array.indexOf(columnName) === index,
+  );
+
+  for (const columnName of candidateColumns) {
+    const cellValue = row?.[columnName];
+    if (typeof cellValue === "string" && cellValue.trim()) {
+      return cellValue.trim();
+    }
+    if (cellValue && typeof cellValue === "object") {
+      const nestedValue = cellValue.value ?? cellValue.label ?? cellValue.name;
+      if (typeof nestedValue === "string" && nestedValue.trim()) {
+        return nestedValue.trim();
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(row || {})) {
+    const normalizedKey = String(key || "").toLowerCase();
+    if (
+      [
+        "distance",
+        "amount",
+        "rate",
+        "unit",
+        "work",
+        "material",
+        "item",
+        "name",
+        "description",
+        "task",
+        "cost_per_meter",
+        "cost_per_kilometer",
+        "cost_currency",
+        "cost_config_id",
+        "cost_config_name",
+        "__summarytype",
+        "__summarylabel",
+      ].includes(normalizedKey)
+    ) {
+      continue;
+    }
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (value && typeof value === "object") {
+      const nestedValue = value.value ?? value.label ?? value.name;
+      if (typeof nestedValue === "string" && nestedValue.trim()) {
+        return nestedValue.trim();
+      }
+    }
+  }
+
+  return "";
+}
+
+function extractTableRowDistanceValue(row, columns = []) {
+  const distanceColumns = (Array.isArray(columns) ? columns : []).filter((column) => {
+    if (!column || typeof column !== "object") return false;
+    const inputType = String(
+      column.inputType || column.fieldType || column.columnType || "",
+    )
+      .trim()
+      .toLowerCase();
+    return inputType === "distance";
+  });
+
+  for (const column of distanceColumns) {
+    const cellValue = row?.[column.name];
+    if (isDistanceCellValue(cellValue)) {
+      const distanceValue = Number(cellValue.distance ?? cellValue.value);
+      const unitValue = String(
+        cellValue.unit || cellValue.distance_unit || column.distanceUnit || "meter",
+      )
+        .trim()
+        .toLowerCase();
+
+      return {
+        distance: Number.isFinite(distanceValue) ? Math.max(0, distanceValue) : 0,
+        unit: unitValue === "kilometer" ? "kilometer" : "meter",
+      };
+    }
+
+    const numericDistance = Number(cellValue);
+    if (Number.isFinite(numericDistance)) {
+      return {
+        distance: Math.max(0, numericDistance),
+        unit: String(column.distanceUnit || "meter").trim().toLowerCase() === "kilometer"
+          ? "kilometer"
+          : "meter",
+      };
+    }
+  }
+
+  for (const [key, value] of Object.entries(row || {})) {
+    if (!/distance|dist|length/i.test(String(key || ""))) continue;
+
+    if (isDistanceCellValue(value)) {
+      const distanceValue = Number(value.distance ?? value.value);
+      const unitValue = String(value.unit || value.distance_unit || row.unit || "meter")
+        .trim()
+        .toLowerCase();
+
+      return {
+        distance: Number.isFinite(distanceValue) ? Math.max(0, distanceValue) : 0,
+        unit: unitValue === "kilometer" ? "kilometer" : "meter",
+      };
+    }
+
+    const numericDistance = Number(value);
+    if (Number.isFinite(numericDistance)) {
+      return {
+        distance: Math.max(0, numericDistance),
+        unit: String(row.unit || "meter").trim().toLowerCase() === "kilometer"
+          ? "kilometer"
+          : "meter",
+      };
+    }
+  }
+
+  return {
+    distance: 0,
+    unit: String(row?.unit || "meter").trim().toLowerCase() === "kilometer"
+      ? "kilometer"
+      : "meter",
+  };
+}
+
+async function loadCostConfigCatalog() {
+  const result = await pool.query(
+    `SELECT id, name, cost_per_meter, cost_per_kilometer, currency, is_active
+     FROM cost_configs
+     ORDER BY is_active DESC, updated_at DESC, created_at DESC, id DESC`,
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    normalized_name: normalizeCostConfigName(row.name),
+    cost_per_meter: Number(row.cost_per_meter) || 0,
+    cost_per_kilometer: Number(row.cost_per_kilometer) || 0,
+    currency: row.currency || "INR",
+    is_active: !!row.is_active,
+  }));
+}
+
+function matchCostConfigForWork(workValue, configs = []) {
+  const normalizedWork = normalizeCostConfigName(workValue);
+  if (!normalizedWork) return null;
+
+  return (
+    configs.find(
+      (config) =>
+        config &&
+        (config.normalized_name === normalizedWork ||
+          normalizeCostConfigName(config.name) === normalizedWork),
+    ) || null
+  );
+}
+
+async function calculateTableSubmissionCosts(data, templateColumns = []) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.rows)) {
+    return null;
+  }
+
+  const columns = normalizeTemplateColumns(templateColumns);
+  const configs = await loadCostConfigCatalog();
+  const activeConfig = configs.find((config) => config.is_active) || configs[0] || null;
+  const rows = [];
+  const breakdown = [];
+  let totalAmount = 0;
+
+  data.rows.forEach((row) => {
+    if (!row || typeof row !== "object" || row.__summaryType) {
+      rows.push(row);
+      return;
+    }
+
+    const workValue = extractTableRowWorkValue(row, columns);
+    const distanceInfo = extractTableRowDistanceValue(row, columns);
+    const matchedConfig = matchCostConfigForWork(workValue, configs);
+    const rate = matchedConfig
+      ? distanceInfo.unit === "kilometer"
+        ? Number(matchedConfig.cost_per_kilometer) || 0
+        : Number(matchedConfig.cost_per_meter) || 0
+      : 0;
+    const amount =
+      Number.isFinite(distanceInfo.distance) && distanceInfo.distance > 0 && rate > 0
+        ? calculateCost(distanceInfo.distance, distanceInfo.unit, {
+            cost_per_meter: matchedConfig?.cost_per_meter || 0,
+            cost_per_kilometer: matchedConfig?.cost_per_kilometer || 0,
+          })
+        : 0;
+    const currency = matchedConfig?.currency || activeConfig?.currency || "INR";
+    const nextRow = {
+      ...row,
+      work: workValue || row.work || "",
+      rate,
+      amount,
+      cost_config_id: matchedConfig?.id || null,
+      cost_config_name: matchedConfig?.name || "",
+      cost_currency: currency,
+    };
+
+    if (Object.prototype.hasOwnProperty.call(row, "distance") && isDistanceCellValue(row.distance)) {
+      nextRow.distance_value = distanceInfo.distance;
+      nextRow.distance_unit = distanceInfo.unit;
+    } else {
+      nextRow.distance = distanceInfo.distance;
+      nextRow.unit = distanceInfo.unit;
+    }
+
+    console.log("Template table cost match", {
+      work: workValue,
+      matched_config: matchedConfig ? matchedConfig.name : null,
+      rate,
+      amount,
+    });
+
+    totalAmount += amount;
+    breakdown.push({
+      work: nextRow.work,
+      distance: distanceInfo.distance,
+      unit: distanceInfo.unit,
+      rate,
+      amount,
+      cost_config_id: nextRow.cost_config_id,
+      cost_config_name: nextRow.cost_config_name,
+      cost_currency: currency,
+    });
+    rows.push(nextRow);
+  });
+
+  return {
+    data: {
+      ...data,
+      rows,
+      _cost_summary: {
+        breakdown,
+        total_amount: totalAmount,
+        total_cost: totalAmount,
+        calculated_at: new Date().toISOString(),
+        currency: activeConfig?.currency || "INR",
+      },
+    },
+    summary: {
+      breakdown,
+      total_amount: totalAmount,
+      total_cost: totalAmount,
+      calculated_at: new Date().toISOString(),
+      currency: activeConfig?.currency || "INR",
+    },
+  };
+}
+
 function normalizeTemplateColumns(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
+
+  const normalizeInputType = (columnName, value, fixedValue) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "distance") return "distance";
+
+    const fixedUnit = String(fixedValue || "").trim().toLowerCase();
+    if (
+      !normalized &&
+      (fixedUnit === "meter" || fixedUnit === "kilometer") &&
+      /distance|dist|length|meter|kilometer|km/i.test(columnName)
+    ) {
+      return "distance";
+    }
+
+    return "text";
+  };
 
   return columnsInput
     .map((column, index) => {
@@ -204,9 +512,13 @@ function normalizeTemplateColumns(columnsInput) {
         return {
           id: `column_${Date.now()}_${index}`,
           name,
+          inputType: "text",
           isLocked: false,
           fixedValue: "",
           rowFixedValues: {},
+          distanceUnit: "meter",
+          unitLocked: false,
+          showCost: false,
           formulaType: null,
           role: null,
         };
@@ -218,19 +530,40 @@ function normalizeTemplateColumns(columnsInput) {
       if (!name) return null;
 
       const fVal = column.fixedValue;
+      const inputType = normalizeInputType(
+        name,
+        column.inputType || column.fieldType || column.columnType,
+        fVal,
+      );
+      const distanceUnit = String(
+        column.distanceUnit || column.unit || fVal || "meter",
+      )
+        .trim()
+        .toLowerCase();
+      const normalizedDistanceUnit =
+        distanceUnit === "kilometer" ? "kilometer" : "meter";
 
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
-        isLocked: !!column.isLocked,
+        inputType,
+        isLocked: !!column.isLocked && inputType !== "distance",
         fixedValue:
-          fVal === undefined || fVal === null || fVal === "null"
+          inputType === "distance" || fVal === undefined || fVal === null || fVal === "null"
             ? ""
             : String(fVal),
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        distanceUnit: normalizedDistanceUnit,
+        unitLocked:
+          column.unitLocked === true ||
+          column.unit_locked === true ||
+          (inputType === "distance" &&
+            String(column.fixedValue || "").trim().toLowerCase() ===
+              normalizedDistanceUnit),
+        showCost: column.showCost === true || column.show_cost === true,
         formulaType: normalizeFormulaType(
           column.formulaType || column.formula_type,
         ),
@@ -327,6 +660,49 @@ function applyTableColumnPolicies(data, templateSnapshot) {
     const nextRow = {};
 
     columnDefs.forEach((column) => {
+      if (String(column.inputType || "text").toLowerCase() === "distance") {
+        const rawValue = row && typeof row === "object" ? row[column.name] : "";
+        if (rawValue && typeof rawValue === "object") {
+          const distanceValue = Number(rawValue.distance ?? rawValue.value);
+          const unitValue = String(
+            rawValue.unit || rawValue.distance_unit || column.distanceUnit || "meter",
+          )
+            .trim()
+            .toLowerCase();
+          nextRow[column.name] = {
+            type: "distance",
+            label: column.name,
+            distance: Number.isFinite(distanceValue) ? Math.max(0, distanceValue) : 0,
+            value: Number.isFinite(distanceValue) ? Math.max(0, distanceValue) : 0,
+            unit: unitValue === "kilometer" ? "kilometer" : "meter",
+            unit_locked: !!column.unitLocked,
+            show_cost: !!column.showCost,
+          };
+        } else {
+          const distanceValue = Number(rawValue);
+          nextRow[column.name] = {
+            type: "distance",
+            label: column.name,
+            distance:
+              rawValue === undefined || rawValue === null || rawValue === ""
+                ? null
+                : Number.isFinite(distanceValue)
+                  ? Math.max(0, distanceValue)
+                  : 0,
+            value:
+              rawValue === undefined || rawValue === null || rawValue === ""
+                ? null
+                : Number.isFinite(distanceValue)
+                  ? Math.max(0, distanceValue)
+                  : 0,
+            unit: column.distanceUnit || "meter",
+            unit_locked: !!column.unitLocked,
+            show_cost: !!column.showCost,
+          };
+        }
+        return;
+      }
+
       const rowFixedCandidate =
         column.rowFixedValues &&
         Object.prototype.hasOwnProperty.call(
@@ -390,7 +766,7 @@ function extractSubmissionValues(data, templateSnapshot) {
     data.fields.forEach((entry) => {
       const entryLabel = (entry.label || "").toString().trim();
       const entryName = (entry.name || "").toString().trim();
-      const entryValue = entry.value;
+      const entryValue = entry.value !== undefined ? entry.value : entry.distance;
       if (entryName) valuesByName.set(entryName.toLowerCase(), entryValue);
       if (entryLabel) valuesByLabel.set(entryLabel.toLowerCase(), entryValue);
     });
@@ -402,7 +778,7 @@ function extractSubmissionValues(data, templateSnapshot) {
         row.cells.forEach((cell) => {
           const cellLabel = (cell.label || "").toString().trim();
           const cellName = (cell.name || "").toString().trim();
-          const cellValue = cell.value;
+          const cellValue = cell.value !== undefined ? cell.value : cell.distance;
           if (cellName) valuesByName.set(cellName.toLowerCase(), cellValue);
           if (cellLabel) valuesByLabel.set(cellLabel.toLowerCase(), cellValue);
         });
@@ -443,6 +819,220 @@ function extractSubmissionValues(data, templateSnapshot) {
   return missing;
 }
 
+function collectDistanceEntries(value, pathParts = []) {
+  const entries = [];
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      entries.push(...collectDistanceEntries(entry, pathParts.concat(index)));
+    });
+    return entries;
+  }
+
+  if (!value || typeof value !== "object") {
+    return entries;
+  }
+
+  const isDistanceEntry =
+    String(value.type || "").toLowerCase() === "distance" ||
+    (Object.prototype.hasOwnProperty.call(value, "distance") &&
+      Object.prototype.hasOwnProperty.call(value, "unit"));
+
+  if (isDistanceEntry) {
+    const distanceValue = Number(value.distance ?? value.value);
+    const unit = String(value.unit || value.distance_unit || "").trim().toLowerCase();
+    const ratePerMeter = Number(value.cost_per_meter ?? value.costPerMeter ?? 0);
+    const ratePerKilometer = Number(value.cost_per_kilometer ?? value.costPerKilometer ?? 0);
+    entries.push({
+      field_id: value.id || value.field_id || value.name || pathParts.join("."),
+      label: value.label || value.name || pathParts[pathParts.length - 1] || "Distance",
+      distance: Number.isFinite(distanceValue) ? distanceValue : 0,
+      unit,
+      cost_per_meter: Number.isFinite(ratePerMeter) ? ratePerMeter : 0,
+      cost_per_kilometer: Number.isFinite(ratePerKilometer) ? ratePerKilometer : 0,
+      cost_currency: value.cost_currency || value.costCurrency || "INR",
+      cost_config_id: value.cost_config_id || value.costConfigId || null,
+      cost_config_name: value.cost_config_name || value.costConfigName || "",
+    });
+  }
+
+  Object.entries(value).forEach(([key, child]) => {
+    if (key === "_cost_summary") return;
+    if (child && typeof child === "object") {
+      entries.push(...collectDistanceEntries(child, pathParts.concat(key)));
+    }
+  });
+
+  return entries;
+}
+
+function hydrateTableDistanceRates(data, templateColumns = []) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.rows)) {
+    return data;
+  }
+
+  const distanceColumns = new Map();
+  (Array.isArray(templateColumns) ? templateColumns : []).forEach((column) => {
+    if (!column || typeof column !== "object") return;
+
+    const inputType = String(
+      column.inputType || column.fieldType || column.columnType || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (inputType !== "distance") return;
+
+    const columnName = String(column.name || column.label || "").trim();
+    if (!columnName) return;
+
+    distanceColumns.set(columnName, column);
+  });
+
+  if (distanceColumns.size === 0) {
+    return data;
+  }
+
+  let changed = false;
+  const rows = data.rows.map((row) => {
+    if (!row || typeof row !== "object" || row.__summaryType) {
+      return row;
+    }
+
+    let rowChanged = false;
+    const nextRow = { ...row };
+
+    distanceColumns.forEach((column, columnName) => {
+      const cell = nextRow[columnName];
+      const fallbackMeter = Number(column.costPerMeter ?? column.cost_per_meter) || 0;
+      const fallbackKilometer = Number(column.costPerKilometer ?? column.cost_per_kilometer) || 0;
+
+      if (!cell || typeof cell !== "object") {
+        const numericDistance = Number(cell);
+        nextRow[columnName] = {
+          type: "distance",
+          label: column.name,
+          distance:
+            cell === undefined || cell === null || cell === ""
+              ? null
+              : Number.isFinite(numericDistance)
+                ? Math.max(0, numericDistance)
+                : 0,
+          value:
+            cell === undefined || cell === null || cell === ""
+              ? null
+              : Number.isFinite(numericDistance)
+                ? Math.max(0, numericDistance)
+                : 0,
+          unit: column.distanceUnit || "meter",
+          unit_locked: !!column.unitLocked,
+          show_cost: !!column.showCost,
+          cost_per_meter: fallbackMeter,
+          cost_per_kilometer: fallbackKilometer,
+          cost_currency:
+            column.costCurrency || column.cost_currency || "INR",
+          cost_config_id: column.costConfigId || column.cost_config_id || null,
+          cost_config_name:
+            column.costConfigName || column.cost_config_name || "",
+        };
+        changed = true;
+        return;
+      }
+
+      const currentMeter = Number(cell.cost_per_meter ?? cell.costPerMeter);
+      const currentKilometer = Number(cell.cost_per_kilometer ?? cell.costPerKilometer);
+
+      const nextCell = {
+        ...cell,
+        cost_per_meter:
+          Number.isFinite(currentMeter) && currentMeter > 0 ? currentMeter : fallbackMeter,
+        cost_per_kilometer:
+          Number.isFinite(currentKilometer) && currentKilometer > 0
+            ? currentKilometer
+            : fallbackKilometer,
+        cost_currency:
+          cell.cost_currency ||
+          cell.costCurrency ||
+          column.costCurrency ||
+          column.cost_currency ||
+          "INR",
+        cost_config_id:
+          cell.cost_config_id ||
+          cell.costConfigId ||
+          column.costConfigId ||
+          column.cost_config_id ||
+          null,
+        cost_config_name:
+          cell.cost_config_name ||
+          cell.costConfigName ||
+          column.costConfigName ||
+          column.cost_config_name ||
+          "",
+      };
+
+      if (
+        nextCell.cost_per_meter !== cell.cost_per_meter ||
+        nextCell.cost_per_kilometer !== cell.cost_per_kilometer ||
+        nextCell.cost_currency !== cell.cost_currency ||
+        nextCell.cost_config_id !== cell.cost_config_id ||
+        nextCell.cost_config_name !== cell.cost_config_name
+      ) {
+        nextRow[columnName] = nextCell;
+        rowChanged = true;
+      }
+    });
+
+    if (rowChanged) {
+      changed = true;
+      return nextRow;
+    }
+
+    return row;
+  });
+
+  return changed ? { ...data, rows } : data;
+}
+
+async function buildCostSummary(data) {
+  const distanceEntries = collectDistanceEntries(data);
+  if (distanceEntries.length === 0) {
+    return null;
+  }
+
+  const activeRates = await getActiveRates();
+  const breakdown = distanceEntries.map((entry) => {
+    const entryRates = {
+      cost_per_meter:
+        Number(entry.cost_per_meter) > 0 ? Number(entry.cost_per_meter) : activeRates.cost_per_meter,
+      cost_per_kilometer:
+        Number(entry.cost_per_kilometer) > 0 ? Number(entry.cost_per_kilometer) : activeRates.cost_per_kilometer,
+    };
+    const cost = calculateCost(entry.distance, entry.unit, entryRates);
+    const rate =
+      String(entry.unit || "").toLowerCase() === "kilometer"
+        ? entryRates.cost_per_kilometer
+        : entryRates.cost_per_meter;
+
+    return {
+      field_id: entry.field_id,
+      label: entry.label,
+      distance: entry.distance,
+      unit: entry.unit,
+      cost_config_id: entry.cost_config_id || null,
+      cost_config_name: entry.cost_config_name || "",
+      cost_currency: entry.cost_currency || "INR",
+      rate: Number(rate) || 0,
+      cost,
+    };
+  });
+
+  return {
+    breakdown,
+    total_cost: breakdown.reduce((sum, item) => sum + (Number(item.cost) || 0), 0),
+    calculated_at: new Date().toISOString(),
+    rates_snapshot: activeRates,
+  };
+}
+
 function buildSingleSubmissionWorkbookRowType(sheetData, submission) {
   const data = parseJson(submission.data, {});
   const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -474,7 +1064,7 @@ function buildSingleSubmissionWorkbookTableType(sheetData, submission) {
     sheetData.push(columns);
     const rows = Array.isArray(data.rows) ? data.rows : [];
     rows.forEach((row) => {
-      sheetData.push(columns.map((col) => row[col] || ""));
+      sheetData.push(columns.map((col) => formatWorkbookCellValue(row[col])));
     });
   }
 
@@ -485,6 +1075,28 @@ function buildSingleSubmissionWorkbookTableType(sheetData, submission) {
     sheetData.push(graphData.headers);
     graphData.rows.forEach((row) => sheetData.push(row));
   }
+}
+
+function formatWorkbookCellValue(value) {
+  if (value && typeof value === "object") {
+    const isDistance =
+      String(value.type || "").toLowerCase() === "distance" ||
+      Object.prototype.hasOwnProperty.call(value, "distance");
+    if (isDistance) {
+      const distanceValue =
+        value.distance !== undefined ? value.distance : value.value;
+      const unitValue = value.unit || value.distance_unit || "meter";
+      const distanceText =
+        distanceValue === null ||
+        distanceValue === undefined ||
+        distanceValue === ""
+          ? ""
+          : distanceValue;
+      return `${distanceText} ${unitValue}`.trim();
+    }
+  }
+
+  return value === null || value === undefined ? "" : value;
 }
 
 function buildSingleSubmissionWorkbookFormType(sheetData, submission) {
@@ -1379,6 +1991,23 @@ router.get(
       }
 
       const row = result.rows[0];
+      const templateColumns = parseJson(row.columns, []);
+      const templateSnapshot = parseJson(row.template_snapshot, null);
+      const hydratedData = hydrateTableDistanceRates(parseJson(row.data, {}), templateColumns);
+      const storedCostSummary = parseJson(hydratedData._cost_summary, null);
+      const storedTotalAmount = Number(
+        storedCostSummary?.total_amount ?? storedCostSummary?.total_cost ?? 0,
+      );
+      const rebuiltCostSummary =
+        storedCostSummary && storedTotalAmount > 0
+          ? storedCostSummary
+          : await buildCostSummary(hydratedData);
+      const responseData = rebuiltCostSummary
+        ? {
+            ...hydratedData,
+            _cost_summary: rebuiltCostSummary,
+          }
+        : hydratedData;
 
       if (req.user.role !== "superadmin") {
         const assignmentResult = await pool.query(
@@ -1413,19 +2042,19 @@ router.get(
           project_id: row.project_id,
           project_name: row.project_name,
           template_id: row.template_id,
-          template_snapshot: parseJson(row.template_snapshot, null),
+          template_snapshot: templateSnapshot,
           template: {
             name: row.template_name,
             template_type: row.template_type || "form",
             fields: parseJson(row.fields, []),
             rows: parseJson(row.rows, []),
-            columns: parseJson(row.columns, []),
+            columns: templateColumns,
             row_limit: row.row_limit,
           },
           submitted_by: row.submitted_by,
           submitted_by_name: row.submitted_by_name,
           submission_date: row.submission_date,
-          data: parseJson(row.data, {}),
+          data: responseData,
           status: row.status,
           reviewed_by: row.reviewed_by,
           reviewed_by_name: row.reviewed_by_name,
@@ -1677,13 +2306,14 @@ router.post(
       }
 
       const templateRow = templateResult.rows[0];
+      const templateColumns = parseJson(templateRow.columns, []);
       const templateSnapshot = {
         id: templateRow.id,
         name: templateRow.name,
         template_type: templateRow.template_type || "form",
         fields: parseJson(templateRow.fields, []),
         rows: parseJson(templateRow.rows, []),
-        columns: normalizeTemplateColumns(parseJson(templateRow.columns, [])),
+        columns: normalizeTemplateColumns(templateColumns),
         row_limit: templateRow.row_limit,
       };
 
@@ -1711,6 +2341,15 @@ router.post(
 
         sanitizedData = applyTableColumnPolicies(data, templateSnapshot);
         sanitizedData = appendSummaryRows(sanitizedData, templateSnapshot);
+        sanitizedData = hydrateTableDistanceRates(sanitizedData, templateColumns);
+
+        const tableCostResult = await calculateTableSubmissionCosts(
+          sanitizedData,
+          templateSnapshot.columns,
+        );
+        if (tableCostResult) {
+          sanitizedData = tableCostResult.data;
+        }
       } else {
         // FIX: Feature4 - Validate required fields by name/label case-insensitively and support required row cells.
         const missing = extractSubmissionValues(data, templateSnapshot);
@@ -1719,6 +2358,17 @@ router.post(
             .status(400)
             .json({ error: `Missing required fields: ${missing.join(", ")}` });
         }
+      }
+
+      const costSummary =
+        templateSnapshot.template_type === "table"
+          ? parseJson(sanitizedData._cost_summary, null)
+          : await buildCostSummary(sanitizedData);
+      if (costSummary) {
+        sanitizedData = {
+          ...sanitizedData,
+          _cost_summary: costSummary,
+        };
       }
 
       if (originalSubmissionId) {

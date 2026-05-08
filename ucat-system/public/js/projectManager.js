@@ -108,6 +108,129 @@ function getBudgetProgressColor(percentUsed) {
   return "#2e7d32";
 }
 
+function formatProgressPercent(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? Math.max(0, Math.min(100, numericValue)) : 0;
+}
+
+function renderProjectProgressLogs(logs) {
+  if (!Array.isArray(logs) || logs.length === 0) {
+    return '<div class="progress-log-empty">No progress logs yet.</div>';
+  }
+
+  return logs
+    .map(
+      (log) => `
+        <div class="progress-log-item">
+          <div class="progress-log-item-header">
+            <strong>${log.description}</strong>
+            <span>${formatProgressPercent(log.progress_before)}% → ${formatProgressPercent(log.progress_after)}%</span>
+          </div>
+          <div class="progress-log-item-meta">
+            <span>${log.logged_by_name || "Project Manager"}</span>
+            <span>${formatDate(log.created_at)}</span>
+          </div>
+          <div class="progress-log-item-note">Increment: ${Number(log.increment_value || 0)}%</div>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+async function loadProjectProgress() {
+  if (!currentProjectId) return;
+
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(`/api/progress/${currentProjectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to load project progress");
+    }
+
+    const data = await response.json();
+    const progressPercent = formatProgressPercent(data.progress_percentage);
+    const progressFill = document.getElementById("projectProgressFill");
+    const progressValue = document.getElementById("projectProgressValue");
+    const progressStatus = document.getElementById("projectProgressStatus");
+    const progressBadge = document.getElementById("projectProgressBadge");
+    const progressTimeline = document.getElementById("progressTimeline");
+    const progressForm = document.getElementById("progressLogForm");
+
+    if (progressFill) progressFill.style.width = `${progressPercent}%`;
+    if (progressValue) progressValue.textContent = `${progressPercent.toFixed(0)}%`;
+    if (progressStatus) {
+      progressStatus.textContent = data.progress_status || "ongoing";
+    }
+    if (progressBadge) {
+      progressBadge.textContent = `${progressPercent.toFixed(0)}% complete`;
+    }
+    if (progressTimeline) {
+      progressTimeline.innerHTML = renderProjectProgressLogs(data.logs || []);
+    }
+
+    if (progressForm) {
+      const formDisabled = String(data.progress_status || "").toLowerCase() === "completed";
+      progressForm.querySelectorAll("input, textarea, button").forEach((element) => {
+        if (element.type === "hidden") return;
+        element.disabled = formDisabled;
+      });
+      if (formDisabled) {
+        const submitButton = progressForm.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.textContent = "Progress Complete";
+      }
+    }
+  } catch (error) {
+    console.error("Error loading project progress:", error);
+    const progressTimeline = document.getElementById("progressTimeline");
+    if (progressTimeline) {
+      progressTimeline.innerHTML = '<div class="progress-log-empty">Failed to load project progress.</div>';
+    }
+  }
+}
+
+async function submitProgressLog(event) {
+  event.preventDefault();
+
+  if (!currentProjectId) return;
+
+  const description = document.getElementById("progressDescription").value.trim();
+  const incrementValue = Number(document.getElementById("progressIncrement").value);
+
+  if (!description || !Number.isFinite(incrementValue) || incrementValue <= 0) {
+    showToast("Description and increment value are required", "error");
+    return;
+  }
+
+  showLoading(true);
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(`/api/progress/${currentProjectId}/log`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ description, increment_value: incrementValue }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to save progress log");
+    }
+
+    document.getElementById("progressLogForm").reset();
+    showToast(payload.message || "Progress updated", "success");
+    await loadProjectProgress();
+  } catch (error) {
+    showToast(error.message || "Failed to save progress log", "error");
+  } finally {
+    showLoading(false);
+  }
+}
+
 function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
@@ -208,6 +331,10 @@ function displayProjectsGrid() {
       <p><strong>Location:</strong> ${project.location}</p>
       <p><strong>City:</strong> ${project.city}</p>
       <p><strong>Status:</strong> <span class="badge badge-${project.work_status === "active" ? "success" : "secondary"}">${project.work_status}</span></p>
+      <div class="progress-bar progress-bar-compact">
+        <div class="progress-fill" style="width: ${formatProgressPercent(project.progress_percentage)}%;"></div>
+      </div>
+      <div class="progress-meta"><span>Progress</span><span>${formatProgressPercent(project.progress_percentage).toFixed(0)}%</span></div>
     </div>
   `,
     )
@@ -263,12 +390,38 @@ async function selectProject(projectId) {
 
   // Show project info
   const projectBudget = project.allocated_budget || 0;
+  const projectProgress = formatProgressPercent(project.progress_percentage);
   const info = `
     <p><strong>Location:</strong> ${project.location}</p>
     <p><strong>City:</strong> ${project.city}</p>
     <p><strong>Project value:</strong> ₹${parseFloat(projectBudget || 0).toLocaleString()}</p>
     <p><strong>Status:</strong> <span class="badge badge-${project.work_status === "active" ? "success" : "secondary"}">${project.work_status}</span></p>
     <p><strong>Created:</strong> ${formatDate(project.created_at)}</p>
+    <div class="project-progress-card">
+      <div class="project-progress-header">
+        <div>
+          <strong>Progress Tracking</strong>
+          <div class="progress-meta"><span>Status</span><span id="projectProgressStatus">${project.progress_status || "ongoing"}</span></div>
+        </div>
+        <span class="badge" id="projectProgressBadge">${projectProgress.toFixed(0)}% complete</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="projectProgressFill" style="width: ${projectProgress}%;"></div>
+      </div>
+      <div class="progress-meta" style="margin-top: 8px;"><span>Overall</span><span id="projectProgressValue">${projectProgress.toFixed(0)}%</span></div>
+      <form id="progressLogForm" class="progress-log-form" onsubmit="submitProgressLog(event)">
+        <div class="form-group">
+          <label>Description *</label>
+          <textarea id="progressDescription" class="form-control" required rows="3" placeholder="Foundation work completed"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Increment Value (%) *</label>
+          <input type="number" id="progressIncrement" class="form-control" min="0.01" step="0.01" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Add Progress Log</button>
+      </form>
+      <div class="progress-timeline" id="progressTimeline"><div class="progress-log-empty">Loading logs...</div></div>
+    </div>
   `;
   document.getElementById("projectInfo").innerHTML = info;
 
@@ -281,6 +434,7 @@ async function selectProject(projectId) {
   loadBudgetTracking();
   loadTeamInfo();
   refreshExpenseWorkspace();
+  loadProjectProgress();
 
   if (typeof loadPMSubmissions === "function") {
     loadPMSubmissions();
@@ -1183,6 +1337,10 @@ function switchTab(e, tabName) {
 
   e.target.classList.add("active");
   document.getElementById(tabName).classList.add("active");
+
+  if (tabName === "submissions" && typeof loadPMSubmissions === "function") {
+    loadPMSubmissions();
+  }
 }
 
 function editTaskStatus(taskId) {

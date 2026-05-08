@@ -82,6 +82,46 @@ function openModal(modalId) {
   if (modal) modal.classList.add("show");
 }
 
+let activeCostRates = {
+  cost_per_meter: 0,
+  cost_per_kilometer: 0,
+};
+
+window.activeCostRates = activeCostRates;
+
+async function loadActiveCostRates() {
+  try {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch("/api/cost-config/active", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to load active cost rates");
+    }
+
+    const rates = await response.json();
+    activeCostRates = {
+      cost_per_meter: Number(rates.cost_per_meter) || 0,
+      cost_per_kilometer: Number(rates.cost_per_kilometer) || 0,
+      currency: rates.currency || "INR",
+      configs: Array.isArray(rates.configs) ? rates.configs : [],
+    };
+    window.activeCostRates = activeCostRates;
+    window.dispatchEvent(new Event("ucat-cost-rates-updated"));
+  } catch (error) {
+    console.warn("Unable to load cost rates:", error.message);
+    activeCostRates = {
+      cost_per_meter: 0,
+      cost_per_kilometer: 0,
+      currency: "INR",
+      configs: [],
+    };
+    window.activeCostRates = activeCostRates;
+    window.dispatchEvent(new Event("ucat-cost-rates-updated"));
+  }
+}
+
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) modal.classList.remove("show");
@@ -988,6 +1028,8 @@ document.addEventListener("DOMContentLoaded", () => {
     window.location.href = "/";
     return;
   }
+
+  loadActiveCostRates();
 
   // Bind forms
   const addWorkerForm = document.getElementById("addWorkerForm");

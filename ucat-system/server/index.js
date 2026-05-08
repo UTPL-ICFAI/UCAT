@@ -25,6 +25,8 @@ import dailyWorkersRoutes from "./routes/dailyWorkers.js";
 import expensesRoutes from "./routes/expenses.js";
 import budgetExtensionsRoutes from "./routes/budgetExtensions.js";
 import supervisorGoalsRoutes from "./routes/supervisorGoals.js";
+import costConfigRoutes from "./routes/costConfig.js";
+import progressRoutes from "./routes/progress.js";
 
 
 dotenv.config();
@@ -67,6 +69,8 @@ app.use("/api/expenses", verifyToken, expensesRoutes);
 app.use("/api/budget-requests", verifyToken, budgetExtensionsRoutes);
 app.use("/api/admin/budget-requests", verifyToken, budgetExtensionsRoutes);
 app.use("/api/supervisor-goals", verifyToken, supervisorGoalsRoutes);
+app.use("/api/cost-config", verifyToken, costConfigRoutes);
+app.use("/api/progress", verifyToken, progressRoutes);
 app.use("/api/sse", sseRoutes);
 
 // Health check

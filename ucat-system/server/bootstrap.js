@@ -104,6 +104,58 @@ async function ensureTemplatesCompatibility(client) {
   await client.query('ALTER TABLE templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true');
 }
 
+async function ensureCostConfigCompatibility(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS cost_configs (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      cost_per_meter NUMERIC(12, 4) NOT NULL DEFAULT 0,
+      cost_per_kilometer NUMERIC(12, 4) NOT NULL DEFAULT 0,
+      currency VARCHAR(20) NOT NULL DEFAULT 'INR',
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+}
+
+async function ensureProjectProgressCompatibility(client) {
+  await client.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_percentage NUMERIC(5,2) NOT NULL DEFAULT 0');
+  await client.query("ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_status VARCHAR(20) NOT NULL DEFAULT 'ongoing'");
+  await client.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS completion_marked_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  await client.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS completion_marked_at TIMESTAMPTZ');
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS progress_logs (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      logged_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      log_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      description TEXT NOT NULL,
+      increment_value NUMERIC(12, 2) NOT NULL CHECK (increment_value > 0),
+      progress_before NUMERIC(5,2) NOT NULL DEFAULT 0,
+      progress_after NUMERIC(5,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  const checkConstraintResult = await client.query(
+    `SELECT 1
+     FROM pg_constraint
+     WHERE conrelid = 'projects'::regclass
+       AND conname = 'projects_progress_percentage_check'`,
+  );
+
+  if (checkConstraintResult.rows.length === 0) {
+    await client.query(`
+      ALTER TABLE projects
+      ADD CONSTRAINT projects_progress_percentage_check
+      CHECK (progress_percentage >= 0 AND progress_percentage <= 100)
+    `);
+  }
+}
+
 async function ensureUserIndexes(client) {
   const usersRoleColumn = await client.query(
     `SELECT 1
@@ -171,6 +223,8 @@ export async function bootstrapDatabase() {
     await client.query(buildBootstrapSchema());
     await ensureUsersCompatibility(client);
     await ensureTemplatesCompatibility(client);
+    await ensureCostConfigCompatibility(client);
+    await ensureProjectProgressCompatibility(client);
 
     const superadminId = await ensureSuperadmin(client);
     await ensureDefaultTemplates(client, superadminId);

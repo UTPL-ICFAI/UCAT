@@ -44,6 +44,10 @@ let editingUserId = null;
 // Global variable to store the budget chart instance (Chart.js)
 let budgetChart = null;
 
+let currentCostConfigId = null;
+let availableCostConfigs = [];
+let activeCostConfig = null;
+
 function getCheckedValues(containerId) {
   const container = document.getElementById(containerId);
   if (!container) return [];
@@ -89,6 +93,269 @@ function formatCurrency(amount) {
   return "₹" + value.toFixed(2);
 }
 
+function renderProgressBarHtml(value) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  return `
+    <div class="progress-bar progress-bar-compact">
+      <div class="progress-fill" style="width: ${percent}%;"></div>
+    </div>
+    <div class="progress-meta"><span>Progress</span><span>${percent.toFixed(0)}%</span></div>
+  `;
+}
+
+function ensureCostConfigPanel() {
+  const section = document.getElementById("templates");
+  if (!section || document.getElementById("costConfigPanel")) {
+    return;
+  }
+
+  const panel = document.createElement("div");
+  panel.id = "costConfigPanel";
+  panel.className = "card cost-config-card";
+  panel.innerHTML = `
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span>Cost Configuration</span>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary btn-small" onclick="resetCostConfigForm()">New Config</button>
+        <span id="costConfigStatus" class="badge">Loading...</span>
+      </div>
+    </div>
+    <form id="costConfigForm" class="cost-config-form" style="padding: 16px 20px 20px;">
+      <div class="form-group">
+        <label>Name *</label>
+        <input type="text" id="costConfigName" class="form-control" required />
+      </div>
+      <div class="form-group">
+        <label>Cost / Meter *</label>
+        <input type="number" id="costPerMeter" class="form-control" min="0" step="0.01" required />
+      </div>
+      <div class="form-group">
+        <label>Cost / Kilometer *</label>
+        <input type="number" id="costPerKilometer" class="form-control" min="0" step="0.01" required />
+      </div>
+      <div class="form-group">
+        <label>Currency</label>
+        <input type="text" id="costCurrency" class="form-control" value="INR" />
+      </div>
+      <div class="form-group" style="display:flex; align-items:center; gap:10px; padding-top: 24px;">
+        <input type="checkbox" id="costConfigIsActive" checked />
+        <label for="costConfigIsActive" style="margin: 0;">Set as active configuration</label>
+      </div>
+      <div style="grid-column: 1 / -1; display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="submit" class="btn btn-primary">Save Configuration</button>
+      </div>
+    </form>
+    <div style="padding: 0 20px 12px; font-size: 12px; color: #666;">Distance/template fields can use the active config or a selected config from the table below.</div>
+    <div id="costConfigSummary" class="cost-summary" style="margin: 0 20px 20px;"></div>
+    <div style="padding: 0 20px 20px; overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse;" id="costConfigTable">
+        <thead>
+          <tr style="background: #f5f5f5;">
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Name</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Meter</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Kilometer</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Currency</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Status</th>
+            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="costConfigTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  const templatesHeader = section.children[0];
+  const buttonRow = templatesHeader ? templatesHeader.nextElementSibling : null;
+  section.insertBefore(panel, buttonRow || section.firstChild.nextSibling);
+
+  const form = document.getElementById("costConfigForm");
+  if (form) {
+    form.addEventListener("submit", submitCostConfigForm);
+  }
+}
+
+function resetCostConfigForm() {
+  currentCostConfigId = null;
+  const form = document.getElementById("costConfigForm");
+  if (form) {
+    form.reset();
+  }
+  const status = document.getElementById("costConfigStatus");
+  if (status) {
+    status.textContent = "New";
+  }
+}
+
+function getCostConfigOptionsText() {
+  if (!Array.isArray(availableCostConfigs) || availableCostConfigs.length === 0) {
+    return "No saved cost configs available.";
+  }
+
+  return availableCostConfigs
+    .map((config, index) => {
+      const activeLabel = config.is_active ? " (active)" : "";
+      return `${index + 1}. ${config.name}${activeLabel} | meter=${config.cost_per_meter} | km=${config.cost_per_kilometer} | ${config.currency || "INR"} | id=${config.id}`;
+    })
+    .join("\n");
+}
+
+function getCostConfigBySelection(selection) {
+  const trimmed = String(selection || "").trim();
+  if (!trimmed) return null;
+
+  const numericSelection = Number(trimmed);
+  if (Number.isInteger(numericSelection) && numericSelection >= 1) {
+    const byIndex = availableCostConfigs[numericSelection - 1];
+    if (byIndex) return byIndex;
+  }
+
+  return (
+    availableCostConfigs.find((config) => String(config.id) === trimmed) ||
+    availableCostConfigs.find((config) => config.name === trimmed) ||
+    null
+  );
+}
+
+function renderCostConfigTable(configs) {
+  const tbody = document.getElementById("costConfigTableBody");
+  if (!tbody) return;
+
+  if (!Array.isArray(configs) || configs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="padding: 12px; text-align: center; color: #777;">No cost configs saved yet.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = configs
+    .map(
+      (config, index) => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd;">${config.name}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${formatCurrency(config.cost_per_meter)}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${formatCurrency(config.cost_per_kilometer)}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${config.currency || "INR"}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${config.is_active ? '<span class="badge">Active</span>' : '<span class="badge">Saved</span>'}</td>
+          <td style="padding: 8px; border: 1px solid #ddd; display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-small" onclick="loadCostConfigIntoForm(${index})">Edit</button>
+            ${config.is_active ? "" : `<button type="button" class="btn btn-primary btn-small" onclick="setActiveCostConfig(${index})">Activate</button>`}
+          </td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function loadCostConfigIntoForm(index) {
+  const config = availableCostConfigs[index];
+  if (!config) return;
+  fillCostConfigForm(config);
+}
+
+function setActiveCostConfig(index) {
+  const config = availableCostConfigs[index];
+  if (!config) return;
+  fillCostConfigForm(config);
+  const activeInput = document.getElementById("costConfigIsActive");
+  if (activeInput) activeInput.checked = true;
+  const status = document.getElementById("costConfigStatus");
+  if (status) status.textContent = "Active";
+}
+
+function fillCostConfigForm(config) {
+  currentCostConfigId = config ? config.id : null;
+  const nameInput = document.getElementById("costConfigName");
+  const meterInput = document.getElementById("costPerMeter");
+  const kilometerInput = document.getElementById("costPerKilometer");
+  const currencyInput = document.getElementById("costCurrency");
+  const activeInput = document.getElementById("costConfigIsActive");
+  const status = document.getElementById("costConfigStatus");
+
+  if (nameInput) nameInput.value = config?.name || "";
+  if (meterInput) meterInput.value = config?.cost_per_meter ?? 0;
+  if (kilometerInput) kilometerInput.value = config?.cost_per_kilometer ?? 0;
+  if (currencyInput) currencyInput.value = config?.currency || "INR";
+  if (activeInput) activeInput.checked = config ? !!config.is_active : true;
+  if (status) {
+    status.textContent = config ? (config.is_active ? "Active" : "Inactive") : "New";
+  }
+}
+
+async function loadCostConfigs() {
+  const token = localStorage.getItem("auth_token");
+  if (!token) return;
+
+  try {
+    const response = await fetch("/api/cost-config", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to load cost configs");
+    }
+
+    const payload = await response.json();
+    const configs = Array.isArray(payload.data) ? payload.data : [];
+    availableCostConfigs = configs;
+    const activeConfig = configs.find((config) => config.is_active) || null;
+    activeCostConfig = activeConfig;
+    fillCostConfigForm(activeConfig);
+    renderCostConfigTable(configs);
+
+    const summary = document.getElementById("costConfigSummary");
+    if (summary) {
+      summary.innerHTML = activeConfig
+        ? `
+          <div style="display:grid; gap:6px;">
+            <strong>Active Rates</strong>
+            <div>Config: ${activeConfig.name}</div>
+            <div>Meter: ${formatCurrency(activeConfig.cost_per_meter)}</div>
+            <div>Kilometer: ${formatCurrency(activeConfig.cost_per_kilometer)}</div>
+            <div>Currency: ${activeConfig.currency || "INR"}</div>
+          </div>
+        `
+        : '<div>No active cost config found.</div>';
+    }
+  } catch (error) {
+    console.error("Error loading cost configs:", error);
+  }
+}
+
+async function submitCostConfigForm(event) {
+  event.preventDefault();
+
+  const payload = {
+    name: document.getElementById("costConfigName").value.trim(),
+    cost_per_meter: Number(document.getElementById("costPerMeter").value),
+    cost_per_kilometer: Number(document.getElementById("costPerKilometer").value),
+    currency: document.getElementById("costCurrency").value.trim() || "INR",
+    is_active: document.getElementById("costConfigIsActive").checked,
+  };
+
+  const token = localStorage.getItem("auth_token");
+  const method = currentCostConfigId ? "PUT" : "POST";
+  const url = currentCostConfigId ? `/api/cost-config/${currentCostConfigId}` : "/api/cost-config";
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to save cost config");
+    }
+
+    showToast("Cost configuration saved", "success");
+    await loadCostConfigs();
+  } catch (error) {
+    showToast(error.message || "Failed to save cost config", "error");
+  }
+}
+
 /**
  * Initialize the application - called on page load
  * Sets up all event listeners, loads data, and prepares UI
@@ -108,6 +375,8 @@ function initializeApp() {
   loadAllDocuments();
   // Load all templates
   loadTemplates();
+  ensureCostConfigPanel();
+  loadCostConfigs();
   // Load users for dropdown menus in project creation
   loadUsersForDropdowns();
   // Setup navigation between different sections
@@ -1677,6 +1946,10 @@ function displayOngoingProjects() {
           <span class="project-detail-label">Budget:</span>
           <span class="project-detail-value">₹${project.total_budget ? parseFloat(project.total_budget).toLocaleString() : "0"}</span>
         </div>
+        <div class="project-detail">
+          <span class="project-detail-label">Progress:</span>
+          <div class="project-detail-value">${renderProgressBarHtml(project.progress_percentage)}</div>
+        </div>
         <!-- Contractor name detail -->
         <div class="project-detail">
           <span class="project-detail-label">Contractor:</span>
@@ -1688,6 +1961,7 @@ function displayOngoingProjects() {
         <button class="btn-view-details" onclick="viewProjectDetails(${project.id})">View Details</button>
         <button class="btn-view-details" onclick="openAssignTemplatesModal(${project.id}, '${(project.name || "").replace(/'/g, "\\'")}')">Assign Templates</button>
         <button class="btn-view-details" onclick="exportProjectWorkbook(${project.id})">Download Excel</button>
+        ${Number(project.progress_percentage || 0) >= 100 && project.work_status !== "completed" ? `<button class="btn-view-details" onclick="markProjectComplete(${project.id})">Mark Complete</button>` : ""}
         <button class="btn-view-details" onclick="deleteProject(${project.id})">Delete Project</button>
       </div>
     `;
@@ -1757,6 +2031,10 @@ function displayPastProjects() {
           <span class="project-detail-label">Budget:</span>
           <span class="project-detail-value">₹${project.total_budget ? parseFloat(project.total_budget).toLocaleString() : "0"}</span>
         </div>
+        <div class="project-detail">
+          <span class="project-detail-label">Progress:</span>
+          <div class="project-detail-value">${renderProgressBarHtml(project.progress_percentage)}</div>
+        </div>
         <!-- Contractor name detail -->
         <div class="project-detail">
           <span class="project-detail-label">Contractor:</span>
@@ -1774,6 +2052,31 @@ function displayPastProjects() {
     // Append the project card to the container
     container.appendChild(projectCard);
   });
+}
+
+function markProjectComplete(projectId) {
+  const token = localStorage.getItem("auth_token");
+
+  fetch(`/api/progress/${projectId}/complete`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (!data.success) {
+        showToast(data.error || "Failed to mark project complete", "error");
+        return;
+      }
+
+      showToast("Project marked complete", "success");
+      loadProjects();
+    })
+    .catch((error) => {
+      console.error("Error marking project complete:", error);
+      showToast("Failed to mark project complete", "error");
+    });
 }
 
 /**
@@ -2662,6 +2965,22 @@ let templateFieldDraft = {
 function normalizeTableColumnsForDesigner(columnsInput) {
   if (!Array.isArray(columnsInput)) return [];
 
+  const normalizeInputType = (columnName, value, fixedValue) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "distance") return "distance";
+
+    const fixedUnit = String(fixedValue || "").trim().toLowerCase();
+    if (
+      !normalized &&
+      (fixedUnit === "meter" || fixedUnit === "kilometer") &&
+      /distance|dist|length|meter|kilometer|km/i.test(columnName)
+    ) {
+      return "distance";
+    }
+
+    return "text";
+  };
+
   return columnsInput
     .map((column, index) => {
       if (typeof column === "string") {
@@ -2670,9 +2989,18 @@ function normalizeTableColumnsForDesigner(columnsInput) {
         return {
           id: `column_${Date.now()}_${index}`,
           name,
+          inputType: "text",
           isLocked: false,
           fixedValue: "",
           rowFixedValues: {},
+          distanceUnit: "meter",
+          unitLocked: false,
+          showCost: false,
+          costConfigId: null,
+          costConfigName: "",
+          costPerMeter: 0,
+          costPerKilometer: 0,
+          costCurrency: "INR",
           formulaType: null,
           role: null,
         };
@@ -2682,20 +3010,51 @@ function normalizeTableColumnsForDesigner(columnsInput) {
       const name = String(column.name || "").trim();
       if (!name) return null;
 
+      const fixedValue =
+        column.fixedValue === undefined ||
+        column.fixedValue === null ||
+        column.fixedValue === "null"
+          ? ""
+          : String(column.fixedValue);
+      const inputType = normalizeInputType(
+        name,
+        column.inputType || column.fieldType || column.columnType,
+        fixedValue,
+      );
+      const distanceUnit = String(
+        column.distanceUnit || column.unit || fixedValue || "meter",
+      )
+        .trim()
+        .toLowerCase();
+      const normalizedDistanceUnit =
+        distanceUnit === "kilometer" ? "kilometer" : "meter";
+
       return {
         id: String(column.id || `column_${Date.now()}_${index}`),
         name,
-        isLocked: !!column.isLocked,
-        fixedValue:
-          column.fixedValue === undefined ||
-          column.fixedValue === null ||
-          column.fixedValue === "null"
-            ? ""
-            : String(column.fixedValue),
+        inputType,
+        isLocked: !!column.isLocked && inputType !== "distance",
+        fixedValue: inputType === "distance" ? "" : fixedValue,
         rowFixedValues:
           column.rowFixedValues && typeof column.rowFixedValues === "object"
             ? column.rowFixedValues
             : {},
+        distanceUnit: normalizedDistanceUnit,
+        unitLocked:
+          column.unitLocked === true ||
+          column.unit_locked === true ||
+          (inputType === "distance" &&
+            String(column.fixedValue || "").trim().toLowerCase() ===
+              normalizedDistanceUnit),
+        showCost: column.showCost === true || column.show_cost === true,
+        costConfigId:
+          column.costConfigId ?? column.cost_config_id ?? null,
+        costConfigName:
+          column.costConfigName ?? column.cost_config_name ?? "",
+        costPerMeter: Number(column.costPerMeter ?? column.cost_per_meter) || 0,
+        costPerKilometer:
+          Number(column.costPerKilometer ?? column.cost_per_kilometer) || 0,
+        costCurrency: column.costCurrency ?? column.cost_currency ?? "INR",
         formulaType: normalizeFormulaTypeInput(
           column.formulaType || column.formula_type,
         ),
@@ -2739,6 +3098,14 @@ function stringifyRowFixedValues(map) {
 
 function summarizeTableColumnConfig(column) {
   const flags = [];
+
+  if (String(column.inputType || "text").toLowerCase() === "distance") {
+    flags.push("Type=distance");
+    flags.push(`Unit=${column.distanceUnit || "meter"}`);
+    if (column.unitLocked) flags.push("Unit locked");
+    if (column.showCost) flags.push("Show cost");
+    if (column.costConfigName) flags.push(`Config=${column.costConfigName}`);
+  }
 
   if (column.isLocked) flags.push("Locked");
   if (
@@ -2968,9 +3335,18 @@ function addTableColumn() {
   templateCreationState.columns.push({
     id: "column_" + Date.now(),
     name: String(columnName).trim(),
+    inputType: "text",
     isLocked: false,
     fixedValue: "",
     rowFixedValues: {},
+    distanceUnit: "meter",
+    unitLocked: false,
+    showCost: false,
+    costConfigId: null,
+    costConfigName: "",
+    costPerMeter: 0,
+    costPerKilometer: 0,
+    costCurrency: "INR",
     formulaType: null,
     role: null,
   });
@@ -3012,6 +3388,63 @@ function configureTableColumn(columnId) {
   );
   if (!column) return;
 
+  const inputTypeRaw = prompt(
+    `Column type for "${column.name}":\n0 = Text column\n1 = Distance column`,
+    String(column.inputType || "text") === "distance" ? "1" : "0",
+  );
+  if (inputTypeRaw === null) return;
+  const inputType = String(inputTypeRaw).trim() === "1" ? "distance" : "text";
+
+  column.inputType = inputType;
+
+  if (inputType === "distance") {
+    const unitRaw = prompt(
+      `Distance unit for "${column.name}":\nmeter or kilometer`,
+      column.distanceUnit || "meter",
+    );
+    if (unitRaw === null) return;
+
+    const normalizedUnit =
+      String(unitRaw).trim().toLowerCase() === "kilometer"
+        ? "kilometer"
+        : "meter";
+    const unitLockedRaw = prompt(
+      `Lock the unit for "${column.name}"?\n0 = No\n1 = Yes`,
+      column.unitLocked ? "1" : "0",
+    );
+    if (unitLockedRaw === null) return;
+
+    const showCostRaw = prompt(
+      `Show estimated cost for "${column.name}"?\n0 = No\n1 = Yes`,
+      column.showCost ? "1" : "0",
+    );
+    if (showCostRaw === null) return;
+
+    const configSelection = prompt(
+      `Assign a cost config for "${column.name}" (enter number, id, or name):\n${getCostConfigOptionsText()}`,
+      column.costConfigId ? String(column.costConfigId) : (activeCostConfig ? String(activeCostConfig.id) : "1"),
+    );
+    if (configSelection === null) return;
+    const selectedConfig = getCostConfigBySelection(configSelection) || activeCostConfig || null;
+
+    column.distanceUnit = normalizedUnit;
+    column.unitLocked = String(unitLockedRaw).trim() === "1";
+    column.showCost = String(showCostRaw).trim() === "1";
+    column.costConfigId = selectedConfig ? selectedConfig.id : null;
+    column.costConfigName = selectedConfig ? selectedConfig.name : "";
+    column.costPerMeter = selectedConfig ? Number(selectedConfig.cost_per_meter) || 0 : 0;
+    column.costPerKilometer = selectedConfig ? Number(selectedConfig.cost_per_kilometer) || 0 : 0;
+    column.costCurrency = selectedConfig ? (selectedConfig.currency || "INR") : "INR";
+    column.isLocked = false;
+    column.fixedValue = "";
+    column.rowFixedValues = {};
+
+    renderColumnsContainer();
+    updateTemplatePreview();
+    showToast(`Updated configuration for ${column.name}`, "success");
+    return;
+  }
+
   const lockModeRaw = prompt(
     `Lock mode for "${column.name}":\n0 = Editable\n1 = Entire column fixed value\n2 = Row-wise fixed values`,
     column.fixedValue !== null
@@ -3046,6 +3479,14 @@ function configureTableColumn(columnId) {
   column.fixedValue = fixedValue;
   column.rowFixedValues = rowFixedValues;
   column.isLocked = lockMode === "1" || lockMode === "2";
+  column.distanceUnit = "meter";
+  column.unitLocked = false;
+  column.showCost = false;
+  column.costConfigId = null;
+  column.costConfigName = "";
+  column.costPerMeter = 0;
+  column.costPerKilometer = 0;
+  column.costCurrency = "INR";
 
   renderColumnsContainer();
   updateTemplatePreview();

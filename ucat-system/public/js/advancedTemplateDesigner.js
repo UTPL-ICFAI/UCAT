@@ -14,10 +14,52 @@ let templateDesignerState = {
   isDefault: false
 };
 
+let designerCostConfigs = [];
+
+async function loadDesignerCostConfigs() {
+  try {
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch('/api/cost-config', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    designerCostConfigs = Array.isArray(payload.data) ? payload.data : [];
+  } catch (error) {
+    console.warn('Unable to load designer cost configs:', error.message);
+    designerCostConfigs = [];
+  }
+}
+
+function getDesignerCostConfigOptionsText() {
+  if (!Array.isArray(designerCostConfigs) || designerCostConfigs.length === 0) {
+    return 'No saved cost configs available.';
+  }
+
+  return designerCostConfigs
+    .map((config, index) => `${index + 1}. ${config.name}${config.is_active ? ' (active)' : ''} | meter=${config.cost_per_meter} | km=${config.cost_per_kilometer} | id=${config.id}`)
+    .join('\n');
+}
+
+function getDesignerCostConfigBySelection(selection) {
+  const trimmed = String(selection || '').trim();
+  if (!trimmed) return null;
+
+  const numericSelection = Number(trimmed);
+  if (Number.isInteger(numericSelection) && numericSelection >= 1) {
+    const byIndex = designerCostConfigs[numericSelection - 1];
+    if (byIndex) return byIndex;
+  }
+
+  return designerCostConfigs.find((config) => String(config.id) === trimmed) || designerCostConfigs.find((config) => config.name === trimmed) || null;
+}
+
 /**
  * Open advanced template designer modal
  */
-function openAdvancedTemplateDesigner() {
+async function openAdvancedTemplateDesigner() {
   templateDesignerState = {
     fields: [],
     rows: [],
@@ -25,6 +67,7 @@ function openAdvancedTemplateDesigner() {
     currentTemplateDescription: '',
     isDefault: false
   };
+  await loadDesignerCostConfigs();
   
   // Show designer interface
   document.getElementById('advancedTemplateDesigner').style.display = 'flex';
@@ -62,16 +105,30 @@ function addTemplateField() {
   const fieldLabel = prompt('Enter field label:');
   if (!fieldLabel) return;
   
-  const fieldType = prompt('Field type (text/number/decimal/date/textarea):', 'text');
+  const fieldType = prompt('Field type (text/number/decimal/date/textarea/distance/select):', 'text');
   const isRequired = confirm('Is this field required?');
-  
-  templateDesignerState.fields.push({
+  const field = {
     label: fieldLabel,
     type: fieldType,
     required: isRequired,
     colspan: 1,
     rowspan: 1
-  });
+  };
+
+  if (String(fieldType).toLowerCase() === 'distance') {
+    field.unit = (prompt('Default unit (meter/kilometer):', 'meter') || 'meter').toLowerCase() === 'kilometer' ? 'kilometer' : 'meter';
+    field.unit_locked = confirm('Lock the unit for this field?');
+    field.show_cost = confirm('Show live cost while submitting?');
+    const configSelection = prompt(`Assign a cost config (number/id/name):\n${getDesignerCostConfigOptionsText()}`, designerCostConfigs.find((config) => config.is_active) ? String(designerCostConfigs.find((config) => config.is_active).id) : '');
+    const selectedConfig = getDesignerCostConfigBySelection(configSelection) || designerCostConfigs.find((config) => config.is_active) || null;
+    field.costConfigId = selectedConfig ? selectedConfig.id : null;
+    field.costConfigName = selectedConfig ? selectedConfig.name : '';
+    field.costPerMeter = selectedConfig ? Number(selectedConfig.cost_per_meter) || 0 : 0;
+    field.costPerKilometer = selectedConfig ? Number(selectedConfig.cost_per_kilometer) || 0 : 0;
+    field.costCurrency = selectedConfig ? (selectedConfig.currency || 'INR') : 'INR';
+  }
+  
+  templateDesignerState.fields.push(field);
   
   renderTemplatePreview();
   showToast(`Field "${fieldLabel}" added`, 'success');
@@ -201,6 +258,7 @@ function renderTemplatePreview() {
             <div>
               <strong>${field.label}</strong>
               <div style="font-size: 12px; color: #666;">Type: ${field.type} ${field.required ? '(Required)' : ''}</div>
+              ${String(field.type).toLowerCase() === 'distance' ? `<div style="font-size: 12px; color: #666;">Unit: ${field.unit || 'meter'} ${field.unit_locked ? '(Locked)' : ''} ${field.show_cost ? '| Live cost enabled' : ''}</div><div style="font-size: 12px; color: #666;">Cost config: ${field.costConfigName || 'Active config'} ${field.costCurrency ? `| ${field.costCurrency}` : ''}</div>` : ''}
             </div>
             <button type="button" class="btn btn-xs btn-danger" onclick="deleteTemplateField(${fieldIndex})">×</button>
           </div>

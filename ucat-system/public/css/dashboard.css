@@ -272,11 +272,124 @@
 
 /* Progress Bar */
 .progress-bar {
+  position: relative;
   height: 8px;
   background: #e0e0e0;
   border-radius: 4px;
   overflow: hidden;
   margin: 10px 0;
+}
+
+.progress-bar-compact {
+  height: 6px;
+  margin: 8px 0 4px;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--gray-medium);
+}
+
+.project-progress-card {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.project-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.progress-log-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.progress-timeline {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.progress-log-item {
+  border-left: 3px solid var(--primary-color);
+  padding: 12px 14px;
+  background: #fafafa;
+  border-radius: 8px;
+}
+
+.progress-log-item-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.progress-log-item-meta,
+.progress-log-item-note,
+.progress-log-empty {
+  font-size: 12px;
+  color: var(--gray-medium);
+}
+
+.progress-log-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cost-config-card {
+  margin-bottom: 24px;
+}
+
+.cost-config-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.cost-summary {
+  background: #f6fbff;
+  border: 1px solid #d5e8ff;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.distance-field {
+  display: grid;
+  gap: 8px;
+}
+
+.distance-input-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 140px;
+  gap: 10px;
+  align-items: center;
+}
+
+.distance-unit-label {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: #f5f5f5;
+  color: var(--gray-dark);
+  font-size: 14px;
+}
+
+.distance-cost-preview {
+  font-size: 12px;
+  color: var(--gray-medium);
 }
 
 /* Submission/document status chips */
