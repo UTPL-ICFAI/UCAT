@@ -73,7 +73,9 @@ function loadPMSubmissions() {
     return;
   }
 
-  const templateFilterEl = document.getElementById("pmSubmissionTemplateFilter");
+  const templateFilterEl = document.getElementById(
+    "pmSubmissionTemplateFilter",
+  );
   const statusFilterEl = document.getElementById("pmSubmissionStatusFilter");
   const dateFilterEl = document.getElementById("pmSubmissionDateFilter");
   const templateFilter = templateFilterEl ? templateFilterEl.value : "";
@@ -163,7 +165,10 @@ function getTemplateColumnsFromSubmission(submission) {
 function findTemplateColumnByName(columns, columnName) {
   return (Array.isArray(columns) ? columns : []).find((column) => {
     if (!column || typeof column !== "object") return false;
-    return String(column.name || column.label || "").trim() === String(columnName || "").trim();
+    return (
+      String(column.name || column.label || "").trim() ===
+      String(columnName || "").trim()
+    );
   });
 }
 
@@ -202,25 +207,32 @@ function firstPositiveRate(...values) {
   return 0;
 }
 
-function calculateSubmissionRowAmount(row, columnName, templateRates, summaryRates) {
+function calculateSubmissionRowAmount(
+  row,
+  columnName,
+  templateRates,
+  summaryRates,
+) {
   const distanceCell = readDistanceCell(row, columnName);
-  if (!distanceCell || distanceCell.distance === null || distanceCell.distance <= 0) {
+  if (
+    !distanceCell ||
+    distanceCell.distance === null ||
+    distanceCell.distance <= 0
+  ) {
     return 0;
   }
 
   const rates = normalizeCostRateBundle({
-    cost_per_meter:
-      firstPositiveRate(
-        distanceCell.cost_per_meter,
-        templateRates.cost_per_meter,
-        summaryRates.cost_per_meter,
-      ),
-    cost_per_kilometer:
-      firstPositiveRate(
-        distanceCell.cost_per_kilometer,
-        templateRates.cost_per_kilometer,
-        summaryRates.cost_per_kilometer,
-      ),
+    cost_per_meter: firstPositiveRate(
+      distanceCell.cost_per_meter,
+      templateRates.cost_per_meter,
+      summaryRates.cost_per_meter,
+    ),
+    cost_per_kilometer: firstPositiveRate(
+      distanceCell.cost_per_kilometer,
+      templateRates.cost_per_kilometer,
+      summaryRates.cost_per_kilometer,
+    ),
   });
 
   const rateValue =
@@ -327,6 +339,13 @@ function renderReviewModal(submission) {
 
   html += renderSubmissionData(submission);
 
+  html += `
+    <div style="margin-top: 20px;">
+      <h4 style="margin-bottom: 10px;">Submission Graph</h4>
+      <div id="submissionGraphContainer" style="width: 100%; min-height: 280px; position: relative;"></div>
+    </div>
+  `;
+
   if (submission.status !== "submitted") {
     html += `
       <div style="margin-top: 15px; padding: 15px; background: #f0f0f0; border-radius: 6px;">
@@ -344,17 +363,19 @@ function renderReviewModal(submission) {
  */
 function renderSubmissionData(submission) {
   const rawData = submission.data;
-  const data = typeof rawData === "string"
-    ? (() => {
-        try {
-          return JSON.parse(rawData);
-        } catch (error) {
-          return { raw: rawData };
-        }
-      })()
-    : rawData || {};
+  const data =
+    typeof rawData === "string"
+      ? (() => {
+          try {
+            return JSON.parse(rawData);
+          } catch (error) {
+            return { raw: rawData };
+          }
+        })()
+      : rawData || {};
   const templateType =
-    (submission.template_snapshot && submission.template_snapshot.template_type) ||
+    (submission.template_snapshot &&
+      submission.template_snapshot.template_type) ||
     (submission.template && submission.template.template_type) ||
     "form";
   const costSummary = data._cost_summary || {};
@@ -412,14 +433,18 @@ function renderSubmissionData(submission) {
             </tr>
           </thead>
           <tbody>
-            ${costBreakdown.map((item) => `
+            ${costBreakdown
+              .map(
+                (item) => `
               <tr>
                 <td style="padding:8px; border:1px solid #ddd;">${item.label || "Distance"}</td>
                 <td style="padding:8px; border:1px solid #ddd;">${item.distance || 0}</td>
                 <td style="padding:8px; border:1px solid #ddd;">${item.unit || "meter"}</td>
                 <td style="padding:8px; border:1px solid #ddd;">₹${Number(item.rate || 0).toFixed(2)}</td>
               </tr>
-            `).join("")}
+            `,
+              )
+              .join("")}
           </tbody>
         </table>
       </div>
@@ -452,21 +477,22 @@ function renderSubmissionData(submission) {
       </div>
     `;
   } else if (templateType === "table" && Array.isArray(data.rows)) {
-    const columns = Array.isArray(data.columns) && data.columns.length > 0
-      ? data.columns.map((column) => {
-          if (typeof column === "string") {
-            return { name: column, label: column };
-          }
+    const columns =
+      Array.isArray(data.columns) && data.columns.length > 0
+        ? data.columns.map((column) => {
+            if (typeof column === "string") {
+              return { name: column, label: column };
+            }
 
-          return {
-            name: column.name || column.label || "Column",
-            label: column.label || column.name || "Column",
-          };
-        })
-      : Object.keys(data.rows[0] || {}).map((columnName) => ({
-          name: columnName,
-          label: columnName,
-        }));
+            return {
+              name: column.name || column.label || "Column",
+              label: column.label || column.name || "Column",
+            };
+          })
+        : Object.keys(data.rows[0] || {}).map((columnName) => ({
+            name: columnName,
+            label: columnName,
+          }));
 
     const templateColumns = getTemplateColumnsFromSubmission(submission);
 
@@ -478,16 +504,22 @@ function renderSubmissionData(submission) {
       : [];
     const costRates = costSummary.rates_snapshot || {};
     const fallbackRates = getFallbackActiveCostRates();
-    const summaryTotalAmount = Number(costSummary.total_amount ?? costSummary.total_cost ?? 0);
+    const summaryTotalAmount = Number(
+      costSummary.total_amount ?? costSummary.total_cost ?? 0,
+    );
 
     function getColumnRates(columnName) {
-      const templateColumn = findTemplateColumnByName(templateColumns, columnName);
+      const templateColumn = findTemplateColumnByName(
+        templateColumns,
+        columnName,
+      );
       if (!templateColumn) {
         return fallbackRates;
       }
 
       return normalizeCostRateBundle({
-        cost_per_meter: templateColumn.costPerMeter ?? templateColumn.cost_per_meter,
+        cost_per_meter:
+          templateColumn.costPerMeter ?? templateColumn.cost_per_meter,
         cost_per_kilometer:
           templateColumn.costPerKilometer ?? templateColumn.cost_per_kilometer,
       });
@@ -560,7 +592,9 @@ function renderSubmissionData(submission) {
             });
 
       const unitValue =
-        (distanceValue && typeof distanceValue === "object" && (distanceValue.unit || distanceValue.distance_unit)) ||
+        (distanceValue &&
+          typeof distanceValue === "object" &&
+          (distanceValue.unit || distanceValue.distance_unit)) ||
         "meter";
       const rateValue =
         String(unitValue).toLowerCase() === "kilometer"
@@ -635,7 +669,9 @@ function renderSubmissionData(submission) {
                     : String(cell);
                 const cellValue =
                   cell && typeof cell === "object"
-                    ? formatCellValue(cell.value !== undefined ? cell.value : cell.distance)
+                    ? formatCellValue(
+                        cell.value !== undefined ? cell.value : cell.distance,
+                      )
                     : "-";
                 return `
                   <tr>
